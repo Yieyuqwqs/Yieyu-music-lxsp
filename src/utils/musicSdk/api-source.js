@@ -53,7 +53,6 @@ const getAPI = source => apiList[`${settingState.setting['common.apiSource']}_ap
  */
 const apis = source => {
   if (sourceEngine.isInited) return sourceEngine.apis(source)
-  if (/^user_api/.test(settingState.setting['common.apiSource'])) return global.lx.apis[source]
   const api = getAPI(source)
   if (api) return api
   throw new Error('Api is not found')

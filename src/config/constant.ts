@@ -83,7 +83,6 @@ export const storageDataPrefix = {
   downloadList: '@download_list',
   downloadSaveDir: '@download_save_dir',
 
-  userApi: '@user_api__',
 } as const
 
 // v0.x.x 版本的 data keys

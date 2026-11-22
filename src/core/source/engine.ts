@@ -7,9 +7,10 @@
  */
 import { SourceRegistry } from './registry'
 import { SourceResolver } from './resolver'
-import { LxspTransport, type FetchLike } from './transport'
+import { LxspTransport, resolveFetch, type FetchLike } from './transport'
 import { RemoteProvider } from './remote'
 import { parseManifest } from './manifest'
+import { LegacyApiProvider, probeLegacyApi } from './legacy-api'
 import { createLegacyProvider, toLegacyQuery, toLegacyMusicItem } from './local'
 import { LxspError, toLxspError } from './errors'
 import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
@@ -40,6 +41,8 @@ export interface EngineInitOptions {
 export interface EndpointStatus {
   baseUrl: string
   ok: boolean
+  /** 端点说的是哪套接口：LXSP v2，还是被就地适配的旧版 LX 音源 API */
+  flavor?: 'lxsp' | 'legacy-api'
   provider?: string
   version?: string
   sources?: LX.Source[]
@@ -117,6 +120,7 @@ export class SourceEngine {
         endpoints.push({
           baseUrl,
           ok: true,
+          flavor: 'lxsp',
           provider: manifest.provider.name,
           version: manifest.provider.version,
           sources: manifest.sources.map(decl => decl.key),
@@ -125,6 +129,41 @@ export class SourceEngine {
         log('info', `LXSP endpoint ready: ${baseUrl} (${manifest.provider.id} v${manifest.provider.version}, ${manifest.sources.length} sources)`)
       } catch (error) {
         const lxErr = toLxspError(error, 'network')
+        // 不是 LXSP？很可能是旧版 LX 音源 API（wwwweb / lx-source-next）：就地适配，别再让用户看到 404
+        const probeFetch = options.fetchImpl ?? resolveFetch()
+        const probe = probeFetch
+          ? await probeLegacyApi({
+            baseUrl,
+            token: endpoint.token ?? options.token ?? null,
+            fetchImpl: probeFetch,
+            timeoutMs: options.timeoutMs,
+          }).catch(() => null)
+          : null
+
+        if (probe && probe.sources.length) {
+          const basePriority = index * 10 + 5
+          for (const decl of probe.sources) {
+            registry.add(new LegacyApiProvider({
+              probe,
+              source: decl,
+              token: endpoint.token ?? options.token ?? null,
+              priority: basePriority,
+              fetchImpl: probeFetch!,
+            }))
+          }
+          endpoints.push({
+            baseUrl,
+            ok: true,
+            flavor: 'legacy-api',
+            provider: probe.flavor === 'wwwweb' ? 'wwwweb 兼容层' : 'lx-source-next 兼容层',
+            version: probe.version,
+            sources: probe.sources.map(decl => decl.key),
+            latencyMs: Date.now() - startedAt,
+          })
+          log('info', `legacy API endpoint adapted: ${baseUrl} (${probe.flavor}, ${probe.sources.length} sources, needKey=${probe.needKey})`)
+          continue
+        }
+
         endpoints.push({ baseUrl, ok: false, error: `${lxErr.code}: ${lxErr.message}`, latencyMs: Date.now() - startedAt })
         log('warn', `LXSP endpoint failed: ${baseUrl} -> ${lxErr.code}: ${lxErr.message}`)
       }

@@ -18,7 +18,6 @@ import cn.toside.music.mobile.download.DownloadPackage;
 import cn.toside.music.mobile.recognize.RecognizePackage;
 import cn.toside.music.mobile.crypto.CryptoPackage;
 import cn.toside.music.mobile.lyric.LyricPackage;
-import cn.toside.music.mobile.userApi.UserApiPackage;
 import cn.toside.music.mobile.utils.UtilsPackage;
 import cn.toside.music.core.CorePackage;
 
@@ -55,7 +54,6 @@ public class MainApplication extends NavigationApplication {
           // M0：Fat Core 门面（业务状态/网络/存储将逐步下沉到 C++）
           packages.add(new CorePackage());
           packages.add(new CryptoPackage());
-          packages.add(new UserApiPackage());
           return packages;
         }
 

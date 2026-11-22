@@ -38,7 +38,7 @@ export interface RequestOptions {
   trace?: string
 }
 
-const resolveFetch = (): FetchLike | null => {
+export const resolveFetch = (): FetchLike | null => {
   const globalFetch = (globalThis as { fetch?: FetchLike }).fetch
   return typeof globalFetch === 'function' ? globalFetch.bind(globalThis) : null
 }

@@ -32,7 +32,7 @@ const t = {
   },
 }
 
-const files = ['./pure.test.mjs', './resolver.test.mjs', './wire.test.mjs', './engine.test.mjs']
+const files = ['./pure.test.mjs', './resolver.test.mjs', './wire.test.mjs', './engine.test.mjs', './legacy.test.mjs']
 for (const file of files) {
   const mod = await import(file)
   mod.default(t)

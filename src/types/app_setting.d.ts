@@ -32,10 +32,6 @@ declare global {
        */
       'common.lxspToken': string
 
-      /**
-       * 是否允许加载旧版 JS 脚本音源（默认关闭：引擎不再执行第三方脚本）
-       */
-      'common.enableUserApiScripts': boolean
 
       /**
        * 音源名称类型，原名、别名

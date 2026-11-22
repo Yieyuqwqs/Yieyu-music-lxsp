@@ -31,11 +31,9 @@ interface GlobalData {
   isScreenKeepAwake: boolean
   isPlayedStop: boolean
   isEnableSyncLog: boolean
-  isEnableUserApiLog: boolean
   playerTrackId: string
 
   qualityList: LX.QualityList
-  apis: Partial<LX.UserApi.UserApiSources>
   apiInitPromise: [Promise<boolean>, boolean, (success: boolean) => void]
 
   jumpMyListPosition: boolean

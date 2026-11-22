@@ -338,6 +338,25 @@ resolveUrl(source, id, wantQuality):
 
 ---
 
+## 10.5 旧版 LX 音源 API 的适配（客户端内）
+
+现实里大量「别人的音源」是两代老接口，都不带 `/manifest`：
+
+| 形态 | 取直链 | 鉴权 | 识别方式 |
+| --- | --- | --- | --- |
+| wwwweb 系 | `POST /music/url` `{source,musicId,quality}` → `{code:200,url}` | `X-Api-Key` | 探测该路由是否存在 |
+| lx-source-next 系 | `GET /api/v0/url/{source}/{id}/{quality}` → `{code:0,data,ext.qual}` | `?key=` | `GET /api/v0/` 的自述 JSON |
+
+客户端处理顺序（**不再出现 404**）：
+
+1. 先按 LXSP 请求 `/manifest`；
+2. 失败（404 / 协议不符）则探测旧版 API，认出即就地包装成 Provider（音源与音质取自其自述，取不到则按公开能力表声明）；
+3. 两代都认不出才判定该端点不可用，并在设置页给出可解释的错误。
+
+适配层同时带 `X-Api-Key` 与 `?key=`，所以用户只需要填「API 地址 + 密钥」。
+旧接口的错误按 §4.3 归一（`密钥验证失败` → `unauthorized`，`VIP/版权` → `upstream_denied`）；
+lx-source-next 的 `ext.qual` 用于回报真实音质与是否降档。
+
 ## 11. 落地位置
 
 | 层 | 位置 |
@@ -354,6 +373,7 @@ resolveUrl(source, id, wantQuality):
 | 解析流水线 | `src/core/source/resolver.ts` |
 | 引擎与旧调用面兼容 | `src/core/source/engine.ts`、`src/core/apiSource.ts` |
 | 参考服务端 | 本地网关 `lx-server/lxsp.js`（挂载于 `server.js`，位于 `/api/v0` 之前） |
+| 旧版 API 适配 | `src/core/source/legacy-api.ts`（App 内，无需外部门面） |
 | 回归测试 | `tests/lxsp/`（`node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs`） |
 | 真机联调 | `tools/lxsp-live.mjs` |
 

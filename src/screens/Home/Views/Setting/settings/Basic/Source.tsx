@@ -1,10 +1,10 @@
 /**
  * 设置 → 音源
  *
- * 旧版本这里是「内置 api + 导入 JS 脚本」两个列表；
- * 新架构下只剩一件事：配置 LXSP 端点（URL + token），能力由端点 /manifest 自己声明。
+ * 只有一件事：配置 LXSP 端点（URL + token），能力由端点 /manifest 自己声明。
+ * 旧版 JS 脚本沙箱已彻底移除：App 里不再有任何执行第三方脚本的代码。
  */
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { TextInput, View } from 'react-native'
 
 import SubTitle from '../../components/SubTitle'
@@ -16,8 +16,6 @@ import { useSettingValue } from '@/store/setting/hook'
 import { updateSetting } from '@/core/common'
 import { getEngineStatus, probeEndpoints, setApiSource, type SourceEngineStatus } from '@/core/apiSource'
 import { useTheme } from '@/store/theme/hook'
-import { useUserApiList } from '@/store/userApi'
-import UserApiEditModal, { type UserApiEditModalType } from './UserApiEditModal'
 
 const refreshDelay = 800
 
@@ -30,7 +28,6 @@ export default memo(() => {
   const [tokenDraft, setTokenDraft] = useState(savedToken)
   const [status, setStatus] = useState<SourceEngineStatus>(() => getEngineStatus())
   const [probing, setProbing] = useState(false)
-  const legacyList = useUserApiList()
 
   useEffect(() => { setEndpointsDraft(savedEndpoints) }, [savedEndpoints])
   useEffect(() => { setTokenDraft(savedToken) }, [savedToken])
@@ -55,9 +52,6 @@ export default memo(() => {
       .finally(() => { setProbing(false) })
   }, [])
 
-  const modalRef = useRef<UserApiEditModalType>(null)
-  const handleShowLegacy = useCallback(() => { modalRef.current?.show() }, [])
-
   const playable = status.sources.length
     ? status.sources.join(' / ')
     : '无可播放音源'
@@ -77,7 +71,7 @@ export default memo(() => {
       </View>
 
       <View style={styles.field}>
-        <Text size={13} color={theme['c-font-label']}>端点地址（换行分隔，支持 主端点 + 镜像）</Text>
+        <Text size={13} color={theme['c-font-label']}>端点地址（LXSP 或对方的音源 API 都行，密钥填在下面；换行可加镜像）</Text>
         <TextInput
           style={{ ...styles.input, color: theme['c-font'], borderColor: theme['c-350'] }}
           value={endpointsDraft}
@@ -97,7 +91,7 @@ export default memo(() => {
           style={{ ...styles.input, color: theme['c-font'], borderColor: theme['c-350'] }}
           value={tokenDraft}
           onChangeText={setTokenDraft}
-          placeholder="留空表示端点不鉴权"
+          placeholder="对方的 API 密钥（没有就留空）"
           placeholderTextColor={theme['c-450']}
           autoCapitalize="none"
           autoCorrect={false}
@@ -115,25 +109,12 @@ export default memo(() => {
           status.endpoints.length
             ? status.endpoints.map(item => (
               <Text key={item.baseUrl} size={12} color={item.ok ? theme['c-500'] : theme['c-font-label']} style={styles.endpoint}>
-                {`${item.ok ? '●' : '○'} ${item.baseUrl}\n   ${item.ok ? `${item.provider ?? ''} v${item.version ?? ''} · ${item.sources?.length ?? 0} 源` : (item.error ?? '未连接')}${item.latencyMs ? ` · ${item.latencyMs}ms` : ''}${item.health ? ` · ${item.health}` : ''}`}
+                {`${item.ok ? '●' : '○'} ${item.baseUrl}\n   ${item.ok ? `${item.provider ?? ''}${item.version ? ' v' + item.version : ''} · ${item.sources?.length ?? 0} 源${item.flavor === 'legacy-api' ? '（旧版 API 已适配）' : ''}` : (item.error ?? '未连接')}${item.latencyMs ? ` · ${item.latencyMs}ms` : ''}${item.health ? ` · ${item.health}` : ''}`}
               </Text>
             ))
             : <Text size={12} color={theme['c-500']}>还没有可用端点：填一个 LXSP 服务地址，例如本机网关 http://127.0.0.1:1101</Text>
         }
       </View>
-
-      <View style={styles.legacy}>
-        <Text size={13} color={theme['c-font-label']}>
-          {`旧版 JS 脚本音源：已停用（${legacyList.length} 个）—— 脚本不再被执行，能力统一由 LXSP 端点提供`}
-        </Text>
-        {
-          legacyList.length
-            ? <View style={styles.btn}><Button onPress={handleShowLegacy}>清理旧脚本</Button></View>
-            : null
-        }
-      </View>
-
-      <UserApiEditModal ref={modalRef} />
     </SubTitle>
   )
 })
@@ -166,8 +147,5 @@ const styles = createStyle({
   endpoint: {
     marginBottom: 6,
     lineHeight: 18,
-  },
-  legacy: {
-    marginTop: 16,
   },
 })

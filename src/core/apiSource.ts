@@ -2,7 +2,7 @@
  * 音源装配入口（原 apiSource.ts 的职责被收窄成「把设置喂给引擎」）。
  *
  * 旧实现：按 common.apiSource 决定加载哪个 api 实现 or 哪个 JS 脚本，
- *        并且每个实现都会改写 global.lx.qualityList / global.lx.apis —— 各自为战。
+ *        并且每个实现都会改写 global.lx.qualityList —— 各自为战。
  * 新实现：只有一个引擎，端点来自设置，能力来自 manifest；
  *        global.lx.qualityList 只是引擎质量的投影，谁也不再直接写它。
  */
