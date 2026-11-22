@@ -1,7 +1,7 @@
 /** 引擎装配：manifest → Provider → 旧调用面（apis/getMusicUrl/getLyric/getPic）+ 搜索转换 */
 import http from 'node:http'
 import { sourceEngine, SourceEngine, parseEndpoints } from '../../src/core/source/engine.ts'
-import { createLegacyProvider, toLegacyMusicItem, extractTrackId, msToInterval } from '../../src/core/source/local.ts'
+import { toLegacyMusicItem, extractTrackId, msToInterval } from '../../src/core/source/local.ts'
 
 const manifest = {
   lxsp: '2.0',
@@ -46,7 +46,6 @@ export default (t) => {
     port = started.port
     const result = await sourceEngine.init({
       endpoints: [{ baseUrl: `http://127.0.0.1:${port}`, token: null }],
-      enableLegacy: false,
     })
     t.eq(result.ok, true, '端点可用')
     t.eq(result.sources.sort(), ['kg', 'kw'], '音源投影')
@@ -84,32 +83,6 @@ export default (t) => {
     t.eq(item.source, 'kw')
   })
 
-  t.suite('内置源适配器：只声明真实具备的能力，且绝不声明 url', () => {
-    const sdk = {
-      musicSearch: { search: async() => ({ list: [{ hash: 'h1', name: 'x', singer: 'y', interval: '04:00' }], total: 1, allPage: 1 }) },
-      getLyric: async() => ({ lyric: 'l', tlyric: '', rlyric: '', lxlyric: '' }),
-      getPic: async() => 'http://p',
-      getMusicUrl: () => ({ promise: Promise.resolve({ url: 'never' }) }),
-    }
-    const provider = createLegacyProvider('kg', 900, sdk)
-    t.eq(provider.meta.capabilities, ['search', 'lyric', 'pic'], '有 url 方法也不声明 url（防递归）')
-    t.eq(provider.supports('url'), false)
-    t.eq(createLegacyProvider('kw', 900, null), null, '没有模块就不注册')
-  })
-
-  t.suite('内置源适配器：歌词/搜索可用', async() => {
-    const sdk = {
-      musicSearch: { search: async() => ({ list: [{ hash: 'h1', name: 'x', singer: 'y' }], total: 1, allPage: 1 }) },
-      getLyric: async() => ({ lyric: 'lrc', tlyric: null, rlyric: null, lxlyric: null }),
-    }
-    const provider = createLegacyProvider('kg', 900, sdk)
-    const lyric = await provider.lyric({ source: 'kg', id: 'h1' })
-    t.eq(lyric.lrc, 'lrc')
-    const search = await provider.search({ text: 'x', page: 1, limit: 10 })
-    t.eq(search.items[0].id, 'h1')
-    await t.rejects(() => provider.resolveUrl({ source: 'kg', id: 'h1' }), 'unsupported', '内置源不许出直链')
-  })
-
   t.suite('端点配置解析：换行/逗号分隔与 url|token 内联', () => {
     t.eq(parseEndpoints('http://127.0.0.1:1101'), [{ baseUrl: 'http://127.0.0.1:1101', token: null }])
     t.eq(parseEndpoints('http://a\nhttp://b|lx_1', 'fallback'), [
@@ -120,18 +93,29 @@ export default (t) => {
     t.eq(parseEndpoints('not-a-url'), [], '非 http 直接丢弃')
   })
 
-  t.suite('端点全挂：引擎仍能起来（内置兜底），但没有任何可播源', async() => {
+  t.suite('纯 LXSP：端点全挂时没有任何音源，就老实报不可用', async() => {
     const engine = new SourceEngine()
-    const sdkSource = { musicSearch: { search: async() => ({ list: [], total: 0, allPage: 1 }) } }
-    const result = await engine.init({
-      endpoints: [{ baseUrl: 'http://127.0.0.1:1' }],
-      enableLegacy: true,
-      getLegacySdk: () => sdkSource,
-    })
+    const result = await engine.init({ endpoints: [{ baseUrl: 'http://127.0.0.1:1' }] })
     t.eq(result.ok, false, '没有可播源 → ok=false')
     t.eq(result.qualityList, {}, 'qualityList 为空，界面不会假装能播')
-    t.eq(engine.registryInstance.size > 0, true, '内置 Provider 仍在（搜索可用）')
+    t.eq(engine.registryInstance.size, 0, '不再有任何内置兜底源')
     t.eq(result.endpoints[0].ok, false)
+    const message = String(result.endpoints[0].error || '')
+    t.ok(message.includes('network'), '死端口应报 network：' + message)
+  })
+
+  t.suite('纯 LXSP：填了不是 LXSP 的地址，要说清「缺 /manifest」而不是干巴巴 404', async() => {
+    const server = http.createServer((req, res) => {
+      res.writeHead(404, { 'Content-Type': 'text/html' })
+      res.end('<html>old service</html>')
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    const engine = new SourceEngine()
+    const result = await engine.init({ endpoints: [{ baseUrl: `http://127.0.0.1:${server.address().port}` }] })
+    server.close()
+    t.eq(result.ok, false)
+    const message = String(result.endpoints[0].error || '')
+    t.ok(message.includes('LXSP'), '要提示缺 /manifest：' + message)
   })
 
   t.suite('工具函数：id 提取、时长格式化', () => {

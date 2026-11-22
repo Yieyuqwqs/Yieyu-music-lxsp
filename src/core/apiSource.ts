@@ -6,7 +6,6 @@
  * 新实现：只有一个引擎，端点来自设置，能力来自 manifest；
  *        global.lx.qualityList 只是引擎质量的投影，谁也不再直接写它。
  */
-import musicSdk from '@/utils/musicSdk'
 import settingState from '@/store/setting/state'
 import { log as writeLog } from '@/utils/log'
 import { updateSetting } from './common'
@@ -51,8 +50,6 @@ export const initSourceEngine = async(): Promise<EngineInitResult> => {
   const result = await sourceEngine.init({
     endpoints,
     token: setting['common.lxspToken'] || null,
-    enableLegacy: true,
-    getLegacySdk: source => (musicSdk as unknown as Record<string, unknown>)[source],
     rememberSource: ({ source, name, singer }) => {
       if (!name) return
       rememberSource({ name, singer, source })

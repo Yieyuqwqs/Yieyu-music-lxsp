@@ -71,7 +71,7 @@ export default memo(() => {
       </View>
 
       <View style={styles.field}>
-        <Text size={13} color={theme['c-font-label']}>端点地址（LXSP 或对方的音源 API 都行，密钥填在下面；换行可加镜像）</Text>
+        <Text size={13} color={theme['c-font-label']}>端点地址（LXSP v2 格式；换行可加镜像）</Text>
         <TextInput
           style={{ ...styles.input, color: theme['c-font'], borderColor: theme['c-350'] }}
           value={endpointsDraft}
@@ -91,7 +91,7 @@ export default memo(() => {
           style={{ ...styles.input, color: theme['c-font'], borderColor: theme['c-350'] }}
           value={tokenDraft}
           onChangeText={setTokenDraft}
-          placeholder="对方的 API 密钥（没有就留空）"
+          placeholder="端点要求的访问密钥（没有就留空）"
           placeholderTextColor={theme['c-450']}
           autoCapitalize="none"
           autoCorrect={false}
@@ -109,7 +109,7 @@ export default memo(() => {
           status.endpoints.length
             ? status.endpoints.map(item => (
               <Text key={item.baseUrl} size={12} color={item.ok ? theme['c-500'] : theme['c-font-label']} style={styles.endpoint}>
-                {`${item.ok ? '●' : '○'} ${item.baseUrl}\n   ${item.ok ? `${item.provider ?? ''}${item.version ? ' v' + item.version : ''} · ${item.sources?.length ?? 0} 源${item.flavor === 'legacy-api' ? '（旧版 API 已适配）' : ''}` : (item.error ?? '未连接')}${item.latencyMs ? ` · ${item.latencyMs}ms` : ''}${item.health ? ` · ${item.health}` : ''}`}
+                {`${item.ok ? '●' : '○'} ${item.baseUrl}\n   ${item.ok ? `${item.provider ?? ''}${item.version ? ' v' + item.version : ''} · ${item.sources?.length ?? 0} 源` : (item.error ?? '未连接')}${item.latencyMs ? ` · ${item.latencyMs}ms` : ''}${item.health ? ` · ${item.health}` : ''}`}
               </Text>
             ))
             : <Text size={12} color={theme['c-500']}>还没有可用端点：填一个 LXSP 服务地址，例如本机网关 http://127.0.0.1:1101</Text>

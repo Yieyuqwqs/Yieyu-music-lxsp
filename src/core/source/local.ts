@@ -1,33 +1,7 @@
 /**
- * 内置源适配器：把 App 里已有的 musicSdk 模块包装成 Provider。
- *
- * 它存在的意义不是「保留旧世界」，而是「兜底」：
- * 当 LXSP 端点全部不可用时，搜索/歌词/封面仍然能靠内置实现工作。
- * 注意：本 fork 的内置 getMusicUrl 早已被抽空（走 apis()），
- * 因此内置 Provider 不声明 url 能力 —— 直链只能由 LXSP 端点提供。
+ * 旧数据模型 ↔ LXSP 曲目的纯转换工具（不含任何音源实现）。
+ * 音源只有一种：LXSP v2 端点；这里只负责把 Track 变成 App 内部的旧形状。
  */
-import { LxspError } from './errors'
-import { sortQualitiesDesc } from './quality'
-import type {
-  LyricResult,
-  ProviderMeta,
-  RequestContext,
-  SearchQuery,
-  SearchResultData,
-  SourceProvider,
-  TrackQuery,
-  UrlQuery,
-  UrlResult,
-} from './types'
-
-/** 各内置音源历史上支持的音质（保守声明，宁少不多） */
-const LEGACY_QUALITIES: Partial<Record<LX.Source, LX.Lxsp.Quality[]>> = {
-  kw: ['320k', '128k'],
-  kg: ['flac24bit', 'flac', '320k', '128k'],
-  tx: ['flac24bit', 'flac', '320k', '128k'],
-  wy: ['flac24bit', 'flac', '320k', '128k'],
-  mg: ['flac24bit', 'flac', '320k', '128k'],
-}
 
 /** 旧数据模型里 id 字段五花八门，这里收敛成唯一入口 */
 const ID_KEYS = ['songmid', 'hash', 'copyrightId', 'contentId', 'musicId', 'songId', 'trackId', 'rid', 'mid', 'id'] as const
@@ -68,76 +42,6 @@ const unwrap = async(value: unknown): Promise<any> => {
   const boxed = value as { promise?: unknown } | null
   const inner = boxed && typeof boxed === 'object' && 'promise' in boxed ? boxed.promise : value
   return await inner
-}
-
-export const createLegacyProvider = (source: LX.Source, priority: number, sdkInput: unknown): SourceProvider | null => {
-  const sdk = sdkInput as AnyRecord | undefined
-  if (!sdk || typeof sdk !== 'object') return null
-
-  const capabilities: LX.Lxsp.Capability[] = []
-  if (typeof sdk.musicSearch?.search === 'function') capabilities.push('search')
-  if (typeof sdk.getLyric === 'function') capabilities.push('lyric')
-  if (typeof sdk.getPic === 'function') capabilities.push('pic')
-
-  const meta: ProviderMeta = {
-    id: `legacy:${source}`,
-    providerId: 'builtin',
-    name: `${source.toUpperCase()}（内置）`,
-    version: '1',
-    kind: 'legacy',
-    source,
-    priority,
-    qualities: sortQualitiesDesc(LEGACY_QUALITIES[source] ?? ['128k']),
-    capabilities,
-  }
-
-  const provider: SourceProvider = {
-    meta,
-    supports: capability => capabilities.includes(capability),
-    // 内置模块的 getMusicUrl 会回调 apis()，在这里调用会形成环；直链必须由 LXSP 端点提供
-    resolveUrl: async(_query: UrlQuery): Promise<UrlResult> => {
-      throw new LxspError('unsupported', `builtin source "${source}" cannot resolve url (use LXSP endpoint)`, { source })
-    },
-    lyric: async(query: TrackQuery, _ctx: RequestContext): Promise<LyricResult> => {
-      if (typeof sdk.getLyric !== 'function') throw new LxspError('unsupported', 'builtin lyric unavailable', { source })
-      const result = await unwrap(sdk.getLyric({ ...query, songmid: query.id, hash: query.id, copyrightId: query.id }))
-      if (!result || typeof result.lyric !== 'string') throw new LxspError('bad_response', 'builtin lyric invalid', { source })
-      return {
-        lrc: result.lyric,
-        tlrc: result.tlyric ?? null,
-        rlrc: result.rlyric ?? null,
-        lxlrc: result.lxlyric ?? null,
-        format: 'lrc',
-      }
-    },
-    pic: async(query: TrackQuery, _ctx: RequestContext): Promise<string> => {
-      if (typeof sdk.getPic !== 'function') throw new LxspError('unsupported', 'builtin pic unavailable', { source })
-      const url = await unwrap(sdk.getPic({ ...query, songmid: query.id, hash: query.id, copyrightId: query.id }))
-      if (typeof url !== 'string' || !url) throw new LxspError('bad_response', 'builtin pic invalid', { source })
-      return url
-    },
-    search: async(query: SearchQuery, _ctx: RequestContext): Promise<SearchResultData> => {
-      if (typeof sdk.musicSearch?.search !== 'function') throw new LxspError('unsupported', 'builtin search unavailable', { source })
-      const result = await unwrap(sdk.musicSearch.search(query.text, query.page, query.limit))
-      const list = Array.isArray(result?.list) ? result.list : []
-      return {
-        items: list.map((item: AnyRecord) => ({
-          id: extractTrackId(item),
-          name: typeof item.name === 'string' ? item.name : '',
-          singer: typeof item.singer === 'string' ? item.singer : '',
-          album: typeof item.albumName === 'string' ? item.albumName : undefined,
-          durationMs: intervalToMs(item.interval) ?? null,
-          coverUrl: typeof item.img === 'string' ? item.img : null,
-        })).filter((item: LX.Lxsp.Track) => item.id && item.name),
-        page: query.page,
-        limit: query.limit,
-        total: typeof result?.total === 'number' ? result.total : null,
-        hasMore: typeof result?.allPage === 'number' ? query.page < result.allPage : false,
-      }
-    },
-  }
-
-  return provider
 }
 
 /** 毫秒 → mm:ss（LX 旧数据模型用字符串时长） */
