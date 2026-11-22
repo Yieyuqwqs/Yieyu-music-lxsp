@@ -2,10 +2,6 @@ name: Build APK
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
 
 permissions:
   contents: write
@@ -132,7 +128,7 @@ jobs:
       # update.json 推到公开只读仓库 Yieyu-Update。顺序不能反：先传包，最后推清单，
       # 这样客户端从清单里拿到的下载地址永远已经存在。
       - name: Publish to public update repo (Yieyu-Update)
-        if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+        if: ${{ github.repository == 'Yieyuqwqs/Yieyu-music' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
         shell: bash
         env:
           # 需要一个能写 Yieyu-Update 的 PAT（repo 权限足够；建议换成只授权该仓库的 fine-grained token）
