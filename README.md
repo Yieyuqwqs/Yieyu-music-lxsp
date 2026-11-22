@@ -1,115 +1,85 @@
-<div align="center">
+# Yieyu Music（落雪音乐 · LXSP 版）
 
-# Yieyu Music
-
-**夜雨 · 沉浸式音乐播放器（Android）**
-
-[![Release](https://img.shields.io/github/v/release/Yieyuqwqs/Yieyu-music?label=release&color=ff4d6d)](https://github.com/Yieyuqwqs/Yieyu-music/releases/latest)
-[![Build](https://img.shields.io/badge/build-GitHub%20Actions-2f81f7)](https://github.com/Yieyuqwqs/Yieyu-music/actions)
-[![Platform](https://img.shields.io/badge/platform-Android%207.0%2B-3ddc84)](#-安装)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-
-基于 [洛雪音乐](https://github.com/lyswhut/lx-music-mobile) 深度定制 · 全界面重做 · 音效全链路重写
-
-当前版本：**v1.9-Aurora** · 包名 `com.yieyu.music`
-
-</div>
+> 一句话：**装好 APK，在设置里填两格（API_URL + API_KEY），就能听歌。**
+> 不用装脚本、不用导入文件、不用管什么叫自定义源。
 
 ---
 
-## ✨ 为这个项目定制的功能
+## 一、先装 APK
 
-### 🎨 全新纯原创的现代化沉浸式 UI
-
-- **完全重写的视觉层**：与上游洛雪完全不同的设计语言，纯原创、非套壳换皮。
-- **黑胶唱片**：播放页以旋转黑胶为核心视觉，专辑封面化身唱片，针臂、纹理、光泽全部手绘级还原。
-- **胶囊组件**：按钮、标签、进度、切换器统一为**胶囊（Capsule）**形态，圆润、轻盈、动效跟手。
-- **动态主题色**：从当前封面取色 → 实时计算主题色 → **整界面渐变、光晕、频谱同步变色**，每首歌都有专属氛围。
-
-### 🎚️ 专业级音频处理链
-
-- **10 段均衡器（EQ）**：SUB / BASS / LOW MID / MID / HIGH MID / PRESENCE / TREBLE 等 10 个频段独立增益，支持预设一键切换与自定义保存。
-- **卷积混响（Convolution Reverb）**：基于真实脉冲响应的空间建模，不是简单的 Delay 叠加，人声通透、尾音自然。
-- **ViPER4Android 风格空间环绕**：**宽场（Wide）**、**深度（Depth）**、**旋转（Rotate）** 三档可选，模拟外放/耳机两种声场，带软限幅与 DC 阻断保护，长时间聆听不刺耳。
-- 音效链全部**本地实时运算**，不改动原始音频文件。
-
-### 🌈 播放页全屏半透明频谱可视化
-
-- 播放页背景铺满**半透明动态音频频谱**，随低/中/高频实时起伏。
-- 动态曲线经过**柔和化处理**（快升慢落 + 响度平滑），不闪眼、不抽搐。
-- 与「动态主题色」联动：频谱颜色跟随封面主色渐变。
-
-### 🧩 洛雪音源解析 · JS 沙盒无缝兼容
-
-- 完整保留上游 **LX Music 自定义音源机制**：`.js` 音源脚本在 **QuickJS 沙盒**中运行，`lx.on('request')`、`lx.request` 等 API 全兼容。
-- 已有洛雪音源脚本**无需修改**，导入即用。
-- 文件关联已注册：双击 `.js` / `.lxmc`（歌单）即可导入本应用。
-
-### ⚙️ 核心底层全 Kotlin 原生接管（ExoPlayer）
-
-- 播放内核由 **Kotlin + ExoPlayer（Media3）** 原生接管，不走 JS 桥接播放，**切歌零延迟、后台稳定、断点续播**。
-- 原生模块覆盖：下载服务（前台 Service）、歌词桌面显示、音效处理、文件读写、缓存清理、屏幕常亮等。
-- 通知栏 / 锁屏 / 蓝牙 / 耳机线控 全原生联动。
+1. 打开 Release 页面，下载 **`Yieyu-music-mobile-v*-arm64-v8a.apk`**（现在的手机基本都是这个）。
+   - 不确定机型就下 `universal` 那个，体积大一点但一定能装。
+2. 点击安装。如果提示「未知来源」，允许一次即可。
+3. 打开 App，进 **设置 → 音源**。
 
 ---
 
-## 📲 安装
+## 二、填两格
 
-1. 打开 [**最新 Release**](https://github.com/Yieyuqwqs/Yieyu-music/releases/latest)。
-2. 按 CPU 架构选包：
-   - `arm64-v8a` — **绝大多数手机选这个**
-   - `armeabi-v7a` — 老机型
-   - `x86_64` / `x86` — 模拟器
-   - `universal` — 不确定就选它（体积最大）
-3. 安装即可，桌面名称为 **Yieyu Music**。
+设置页里只有两个输入框，别被缩写吓到：
 
-> ⚠️ **包名变更提醒**：本版包名已改为 `com.yieyu.music`，从旧版（`cn.toside.music.mobile`）升级需要**先卸载旧版**。此后所有版本使用固定签名，**版本升级可直接覆盖安装，无需卸载**。
+| 输入框 | 填什么 | 举例 |
+| --- | --- | --- |
+| **API_URL** | 你用的音源服务地址（别人给你的，或者你自己搭的） | `https://c.wwwweb.top` |
+| **API_KEY** | 同一个服务给你的密钥 | `IKM-xxxxxxxx` |
 
-## 🔑 授权（VIP 卡密）
+填完点 **「保存并重连」**，等 1~2 秒。
 
-- 软件采用**离线卡密**授权：激活后**不联网也能用**，本机校验。
-- 卡密格式：**16 位短卡密**，形如 `YIEYU-XXXX-XXXXX`，绑定**本机设备码**，一码一机。
-- 设备码在「授权页」点击即可复制，发给管理员换卡密。
-- 支持有效期：**1 天 / 7 天 / 30 天 / 365 天 / 永久 / 自定义天数**。
-- 未激活时仅显示全屏授权页；到期、时间回拨异常会立即切回授权页。
+### 成功的样子
 
-## 🛠️ 自行构建
+- 上面那行变成：`端点：1/1 在线`
+- 下面出现一个 `●` 开头的绿点行，写着提供方和 `N 源`
+- 回首页搜歌，能点开就是能播
 
-```bash
-# 环境：Node.js 18+、JDK 17、Android SDK (compileSdk 34)
-git clone https://github.com/Yieyuqwqs/Yieyu-music.git
-cd Yieyu-music
-npm install --legacy-peer-deps
+### 不知道填什么？三种常见情况
 
-# 客户端（com.yieyu.music）
-cd android && ./gradlew assembleRelease
+**情况 A：别人给了你一个网站地址 + 一串密钥**
+→ 地址填 API_URL，密钥填 API_KEY，就这样。
 
-# 管理端（com.yieyu.music.admin，仅自用）
-./gradlew assembleRelease -PyieyuAdmin=1
-```
+**情况 B：你手机上自己跑了解析服务**
+→ API_URL 填 `http://127.0.0.1:1101`（或服务的端口），密钥看服务配置，没有就留空。
 
-CI 侧每次打包都会用 **固定证书** 签名，并用 `scripts/verify-apk-signature.js` 直接读取 APK 签名块强校验指纹：**指纹不符直接构建失败**，因此 Releases 里的包永远可以互相覆盖升级。
+**情况 C：你自己搭了这个网关**
+→ API_URL 填网关地址（如 `http://127.0.0.1:8080`），密钥留空。
 
-证书指纹：`A64D1DB9 7260115A 99C0FE46 6B374317 61E09BCE BE1D1BDECD85A847C5B4E994`
+---
 
-## 📁 目录速览
+## 三、出了问题，按这三条排查（从上往下）
 
-| 路径 | 说明 |
+**① 显示「0/1 在线」**
+- 服务没开：先把服务启动起来，再点「保存并重连」。
+- 地址错：`http://` / `https://` 要写全，结尾不要带 `/`。
+- 手机上跑的服务，用 `127.0.0.1`；电脑上跑的服务，填电脑的局域网 IP（如 `http://192.168.1.5:8080`）。
+
+**② 在线了，但搜不到歌 / 点了不出声**
+- 对方服务只提供「直链」时，搜索、歌词、封面本来就可能是空的 —— 这是能力差异，不是坏了。
+- 出不了声：多半是密钥错（提示 `unauthorized`）或那首歌没版权（提示 `upstream_denied`）。
+
+**③ 提示「既不是 LXSP v2，也没认出任何已知接口」**
+- API_URL 填到了网站首页，而不是音源服务的根地址。换成对方的服务地址再试。
+
+---
+
+## 四、这件事为什么比以前的脚本方案省心
+
+| 以前的「自定义源脚本」 | 现在 |
 | --- | --- |
-| `src/` | 界面、状态、播放逻辑（TypeScript / React Native） |
-| `android/` | Kotlin 原生模块、ExoPlayer、下载/歌词服务 |
-| `src/utils/rsa.js` | 纯 JS RSA-2048（旧版长卡密兼容） |
-| `src/utils/hmacSha256.js` | 纯 JS HMAC-SHA256（16 位短卡密校验） |
-| `scripts/` | 变体切换、签名校验、密钥生成等构建脚本 |
+| 下载 .js 文件 → 导入 → 脚本报错看不懂 | 只填两格 |
+| 每换一个源就要重新导入一个脚本 | 换地址即可，App 不用更新 |
+| 脚本能跑任意代码，来源不明有风险 | **App 不再执行任何脚本**，只发 HTTP 请求 |
+| 每个脚本自己定错误文案 | 统一错误码：`unauthorized` / `not_found` / `upstream_denied` / `timeout` … |
 
-## 🙏 致谢与声明
+技术规范见 [`docs/LXSP-v2.md`](docs/LXSP-v2.md)；回归测试 `npm run test:lxsp`（44 项）。
 
-- 感谢 [**lx-music-mobile**](https://github.com/lyswhut/lx-music-mobile) 与 **洛雪音乐** 的开源工作，本项目的音源解析与播放能力建立在其之上。
-- 本项目仅用于**个人学习与技术研究**，所有音乐内容来自用户自行添加的音源，软件本身**不提供、不存储任何音频资源**。
-- 请支持正版音乐。因使用本软件产生的任何版权或法律问题，由使用者自行承担。
+---
 
-<div align="center">
+## 五、给自己人看的：支持哪几种后端
 
-**Made with ❤️ by Yieyu** · v1.9-Aurora
+客户端会**并行**判断你填的地址属于哪一类（探测最坏只等一个超时，不是串行等四次）：
 
-</div>
+1. **LXSP v2**（推荐）：有 `/manifest` 就按它声明的能力工作，功能最全。
+2. **lx-source 系**：`/api/v0/` 自述 + `/api/v0/url/...`，`?key=` 鉴权。
+3. **wwwweb 系**：`POST /music/url` + `X-Api-Key`。
+4. **通用 JSON 系**：`POST /api/parse` 或 `/url`，兼容 `url` / `data.url` / `data.data.url`。
+
+2~4 类只保证「能返回直链 → 能播」，不保证搜索/歌词/封面。

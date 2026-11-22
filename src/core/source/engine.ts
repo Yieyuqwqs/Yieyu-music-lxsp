@@ -8,13 +8,17 @@
 import { SourceRegistry } from './registry'
 import { SourceResolver } from './resolver'
 import { LxspTransport, resolveFetch, type FetchLike } from './transport'
+import { detectEndpoint, type Detection } from './detect'
 import { RemoteProvider } from './remote'
 import { parseManifest } from './manifest'
-import { ApiProfileProvider, probeApiProfiles } from './api-profiles'
+import { ApiProfileProvider } from './api-profiles'
 import { toLegacyQuery, toLegacyMusicItem } from './local'
 import { LxspError, toLxspError } from './errors'
 import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
 import type { ProviderHealth, SourceProvider } from './types'
+
+/** 端点形态缓存有效期：10 分钟内重复重连不再探测 */
+const DETECTION_TTL_MS = 10 * 60_000
 
 export interface EngineEndpointConfig {
   /** 端点 base URL，例如 http://127.0.0.1:1101 */
@@ -61,6 +65,8 @@ export class SourceEngine {
   private statuses: EndpointStatus[] = []
   private options: EngineInitOptions = { endpoints: [] }
   private inited = false
+  /** 端点形态缓存：key = baseUrl|token，10 分钟内复用，避免每次重连都重新探测 */
+  private detections = new Map<string, { detection: Detection, expireAt: number }>()
   private version = 1
 
   get isInited(): boolean {
@@ -77,33 +83,59 @@ export class SourceEngine {
       const baseUrl = normalizeBaseUrl(endpoint.baseUrl)
       if (!baseUrl) continue
       const startedAt = Date.now()
-      try {
-        const transport = new LxspTransport({
-          baseUrl,
-          token: endpoint.token ?? options.token ?? null,
-          timeoutMs: options.timeoutMs ?? DEFAULT_LIMITS.manifestTimeoutMs,
-          fetchImpl: options.fetchImpl,
-        })
-        const rawManifest = await transport.getJson<unknown>('/manifest', {}, { timeoutMs: options.timeoutMs ?? DEFAULT_LIMITS.manifestTimeoutMs })
-        const manifest = parseManifest(rawManifest)
+      const token = endpoint.token ?? options.token ?? null
+      const fetchImpl = options.fetchImpl ?? resolveFetch()
+      if (!fetchImpl) {
+        endpoints.push({ baseUrl, ok: false, error: '当前环境没有 fetch 实现' })
+        continue
+      }
 
-        // 未声明鉴权但配置了 token 时，按 bearer 处理（绝大多数部署如此）
-        if (!manifest.auth && (endpoint.token ?? options.token)) {
-          manifest.auth = { required: true, scheme: 'bearer' }
-        }
-        const providerTransport = manifest.auth
+      const cacheKey = `${baseUrl}|${token ?? ''}`
+      const hit = this.detections.get(cacheKey)
+      let detection: Detection | null = hit && hit.expireAt > Date.now() ? hit.detection : null
+      let detectError: string | undefined
+
+      if (!detection) {
+        // 并行探测：最坏只等一个超时，而不是「串行等四个」
+        const detected = await detectEndpoint({
+          baseUrl,
+          token,
+          fetchImpl,
+          manifestTimeoutMs: Math.min(options.timeoutMs ?? DEFAULT_LIMITS.manifestTimeoutMs, 3500),
+          profileTimeoutMs: 2500,
+        })
+        detection = detected.detection
+        detectError = detected.error
+        if (detection) this.detections.set(cacheKey, { detection, expireAt: Date.now() + DETECTION_TTL_MS })
+        log('info', `endpoint detected in ${detected.elapsedMs}ms: ${baseUrl} -> ${detection ? (detection.kind === 'lxsp' ? 'lxsp' : detection.probe.profile) : 'unknown'}`)
+      }
+
+      if (!detection) {
+        endpoints.push({
+          baseUrl,
+          ok: false,
+          error: `${detectError ?? '无法识别的端点'}（既不是 LXSP v2，也没认出任何已知接口：确认 API_URL 指向音源服务根地址）`,
+          latencyMs: Date.now() - startedAt,
+        })
+        log('warn', `endpoint not recognised: ${baseUrl}`)
+        continue
+      }
+
+      if (detection.kind === 'lxsp') {
+        const manifest = detection.manifest
+        if (!manifest.auth && token) manifest.auth = { required: true, scheme: 'bearer' }
+        const transport = manifest.auth
           ? new LxspTransport({
             baseUrl,
-            token: endpoint.token ?? options.token ?? null,
+            token,
             auth: manifest.auth,
             timeoutMs: manifest.limits?.timeoutMs ?? options.timeoutMs ?? DEFAULT_LIMITS.timeoutMs,
-            fetchImpl: options.fetchImpl,
+            fetchImpl,
           })
-          : transport
-
+          : detection.transport
         for (const decl of manifest.sources) {
           registry.add(new RemoteProvider({
-            transport: providerTransport,
+            transport,
             manifest,
             source: decl,
             priority: index * 10,
@@ -119,39 +151,26 @@ export class SourceEngine {
           latencyMs: Date.now() - startedAt,
         })
         log('info', `LXSP endpoint ready: ${baseUrl} (${manifest.provider.id} v${manifest.provider.version}, ${manifest.sources.length} sources)`)
-      } catch (error) {
-        const lxErr = toLxspError(error, 'network')
-        // 不是 LXSP v2？按 API_URL + API_KEY 依次探测旧脚本后端的三族接口（App 不执行任何脚本）
-        const probeFetch = options.fetchImpl ?? resolveFetch()
-        const probe = probeFetch
-          ? await probeApiProfiles({ baseUrl, token: endpoint.token ?? options.token ?? null, fetchImpl: probeFetch, timeoutMs: options.timeoutMs }).catch(() => null)
-          : null
-        if (probe) {
-          for (const decl of probe.sources) {
-            registry.add(new ApiProfileProvider({
-              probe,
-              source: decl,
-              token: endpoint.token ?? options.token ?? null,
-              priority: index * 10 + 5,
-              fetchImpl: probeFetch!,
-            }))
-          }
-          endpoints.push({
-            baseUrl,
-            ok: true,
-            provider: probe.profile,
-            sources: probe.sources.map(decl => decl.key),
-            latencyMs: Date.now() - startedAt,
-          })
-          log('info', `api profile adapted: ${baseUrl} (${probe.profile}, ${probe.sources.length} sources)`)
-          continue
+      } else {
+        const probe = detection.probe
+        for (const decl of probe.sources) {
+          registry.add(new ApiProfileProvider({
+            probe,
+            source: decl,
+            token,
+            priority: index * 10 + 5,
+            fetchImpl,
+          }))
         }
-
-        const hint = lxErr.code === 'bad_response' || lxErr.code === 'not_found'
-          ? '（既不是 LXSP v2，也没认出任何已知接口：确认 API_URL 是否指向音源服务根地址）'
-          : ''
-        endpoints.push({ baseUrl, ok: false, error: `${lxErr.code}: ${lxErr.message}${hint}`, latencyMs: Date.now() - startedAt })
-        log('warn', `endpoint failed: ${baseUrl} -> ${lxErr.code}: ${lxErr.message}`)
+        endpoints.push({
+          baseUrl,
+          ok: true,
+          provider: probe.profile,
+          version: probe.version,
+          sources: probe.sources.map(decl => decl.key),
+          latencyMs: Date.now() - startedAt,
+        })
+        log('info', `api profile ready: ${baseUrl} (${probe.profile}, ${probe.sources.length} sources)`)
       }
     }
 
@@ -159,6 +178,8 @@ export class SourceEngine {
     this.resolver = new SourceResolver({
       registry,
       hooks: { rememberSource: options.rememberSource },
+      // 直链缓存 120s：同一首歌反复播放/切歌回来不再打上游（过期直链由播放失败兜底换源）
+      urlCacheTtlMs: 120_000,
     })
     this.statuses = endpoints
     this.options = options
