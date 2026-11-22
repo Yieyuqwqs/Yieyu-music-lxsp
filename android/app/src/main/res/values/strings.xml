@@ -1,0 +1,9 @@
+<resources>
+  <string name="download_service_channel_name">下载</string>
+  <string name="download_service_channel_desc">后台下载保活</string>
+  <string name="download_service_title">Yieyu Music 正在下载</string>
+  <string name="download_service_text">切到后台也会继续下载</string>
+  <string name="yieyu_widget_label">Yieyu 灵动胶囊</string>
+  <string name="yieyu_widget_desc">桌面小部件：显示当前歌曲与实时频谱，可直接播放/上一首/下一首</string>
+  <string name="yieyu_widget_spectrum">实时频谱</string>
+</resources>

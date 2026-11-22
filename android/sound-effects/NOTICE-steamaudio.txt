@@ -1,0 +1,9 @@
+This project bundles Valve Steam Audio (phonon) Android binaries and headers.
+
+  Steam Audio 4.8.1 — https://github.com/ValveSoftware/steam-audio
+  Copyright 2017-2025 Valve Corporation.
+  Licensed under the Apache License, Version 2.0.
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Only the arm64-v8a prebuilt shared library (src/main/jniLibs/arm64-v8a/libphonon.so)
+and the public C API headers (src/main/cpp/include/phonon*.h) are redistributed.

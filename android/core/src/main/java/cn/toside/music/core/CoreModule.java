@@ -1,0 +1,194 @@
+package cn.toside.music.core;
+
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
+
+import com.facebook.react.modules.core.DeviceEventManagerModule;
+import com.facebook.react.bridge.Promise;
+import com.facebook.react.bridge.ReactApplicationContext;
+import com.facebook.react.bridge.ReactContextBaseJavaModule;
+import com.facebook.react.bridge.ReactMethod;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * Yieyu Core 的 RN 门面（M0 地基）。
+ *
+ * 三条硬约束（见 ARCH_FAT_CORE.md §4）：
+ * 1. 这里**不写业务**：所有方法只做参数转交，必须 <0.5ms 返回。
+ * 2. 事件只能通过 onEvent() 投递到 DeviceEventEmitter，绝不阻塞等待 JS。
+ * 3. 每个 request 都有 3s 硬超时，绝不留下永不 resolve 的 Promise。
+ */
+public final class CoreModule extends ReactContextBaseJavaModule implements CoreCallback {
+  public static final String NAME = "YieyuCore";
+  private static final String TAG = "YieyuCore";
+  /** 事件前缀：JS 侧统一订阅 "YieyuCore:<topic>" */
+  public static final String EVENT_PREFIX = "YieyuCore:";
+  private static final long REQUEST_TIMEOUT_MS = 3000L;
+
+  private static final boolean LOADED;
+  private static String loadError = "";
+
+  static {
+    boolean loaded = false;
+    try {
+      System.loadLibrary("yieyu_core");
+      loaded = true;
+    } catch (Throwable error) {
+      loadError = error.getClass().getSimpleName() + ": " + error.getMessage();
+      Log.e(TAG, "loadLibrary failed: " + loadError);
+    }
+    LOADED = loaded;
+  }
+
+  private final Handler mainHandler = new Handler(Looper.getMainLooper());
+  private final Map<Long, Promise> pending = new HashMap<>();
+  private long requestSeq = 1;
+  private int emitFailures = 0;
+
+  public CoreModule(ReactApplicationContext context) {
+    super(context);
+    if (!LOADED) return;
+    // 存储目录交给 C++（M1）：文件读写绝不能发生在 JS 线程
+    final String dir = context.getFilesDir().getAbsolutePath() + "/core";
+    Thread init = new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          nativeInit(dir);
+        } catch (Throwable error) {
+          Log.e(TAG, "core init failed", error);
+        }
+      }
+    }, "yieyu-core-init");
+    init.setDaemon(true);
+    init.start();
+  }
+
+  @Override
+  public String getName() {
+    return NAME;
+  }
+
+  public static boolean available() {
+    return LOADED;
+  }
+
+  public static String loadErrorText() {
+    return loadError;
+  }
+
+  // ------------------------------------------------------------ JS → C++
+
+  @ReactMethod
+  public void post(String op, String payload, double seq) {
+    if (!LOADED) return;
+    nativePost(op == null ? "" : op, payload == null ? "{}" : payload, seq);
+  }
+
+  @ReactMethod
+  public void request(final String op, String payload, final Promise promise) {
+    if (!LOADED) {
+      promise.reject("CORE_UNAVAILABLE", loadError);
+      return;
+    }
+    final long id;
+    synchronized (pending) {
+      id = requestSeq++;
+      pending.put(id, promise);
+    }
+    nativeRequest(op == null ? "" : op, payload == null ? "{}" : payload, id);
+    // 超时兜底：C++ 侧真出问题时，JS 也不会被挂住
+    mainHandler.postDelayed(new Runnable() {
+      @Override
+      public void run() {
+        Promise stale;
+        synchronized (pending) {
+          stale = pending.remove(id);
+        }
+        if (stale != null) stale.reject("CORE_TIMEOUT", "core request timeout: " + op);
+      }
+    }, REQUEST_TIMEOUT_MS);
+  }
+
+  @ReactMethod
+  public void subscribe(String topic, int maxHz) {
+    if (!LOADED) return;
+    nativeSubscribe(topic == null ? "" : topic, maxHz);
+  }
+
+  @ReactMethod
+  public void unsubscribe(String topic) {
+    if (!LOADED) return;
+    nativeUnsubscribe(topic == null ? "" : topic);
+  }
+
+  @ReactMethod
+  public void setForeground(boolean foreground) {
+    if (!LOADED) return;
+    nativeSetForeground(foreground);
+  }
+
+  /** JS 卸载 / reload 前调用，保证 GlobalRef 与线程都干净退出（内存红线） */
+  @ReactMethod
+  public void stopCore() {
+    if (!LOADED) return;
+    try {
+      nativeStop();
+    } catch (Throwable error) {
+      Log.e(TAG, "stopCore failed", error);
+    }
+  }
+
+  @ReactMethod
+  public void getStats(Promise promise) {
+    if (!LOADED) {
+      promise.reject("CORE_UNAVAILABLE", loadError);
+      return;
+    }
+    try {
+      promise.resolve(nativeStats());
+    } catch (Throwable error) {
+      promise.reject("CORE_STATS_FAILED", error);
+    }
+  }
+
+  // ------------------------------------------------------------ C++ → JS（core-disp 线程）
+
+  @Override
+  public void onEvent(String topic, String json) {
+    if (emitFailures > 3) return;   // 宿主已死（reload 后）：不再刷日志，等新宿主重建
+    ReactApplicationContext context = getReactApplicationContext();
+    if (context == null) return;
+    try {
+      context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+          .emit(EVENT_PREFIX + topic, json);
+    } catch (Throwable error) {
+      // 绝不让异常穿过 JNI：这里吞掉并降级
+      emitFailures++;
+      Log.e(TAG, "emit failed: " + topic, error);
+    }
+  }
+
+  @Override
+  public void onResponse(long requestId, String json) {
+    Promise promise;
+    synchronized (pending) {
+      promise = pending.remove(requestId);
+    }
+    if (promise != null) promise.resolve(json);
+  }
+
+  // ------------------------------------------------------------ native
+
+  private native void nativeInit(String storageDir);
+  private native void nativePost(String op, String payload, double seq);
+  private native void nativeRequest(String op, String payload, long id);
+  private native void nativeSubscribe(String topic, int maxHz);
+  private native void nativeUnsubscribe(String topic);
+  private native void nativeSetForeground(boolean foreground);
+  private native void nativeStop();
+  private native String nativeStats();
+}

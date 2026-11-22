@@ -1,0 +1,92 @@
+name: Setup
+description: Setup Env
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: .nvmrc
+
+    - name: Setup Java Env
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'microsoft'
+        java-version: '17'
+        cache: gradle
+
+    - name: Get npm cache directory
+      id: npm-cache-dir
+      shell: bash
+      run: echo "cachedir=$(npm config get cache)" >> ${GITHUB_OUTPUT}
+
+    - name: Cache node modules
+      id: cache-npm
+      uses: actions/cache@v4
+      with:
+        # npm cache files are stored in `~/.npm` on Linux/macOS
+        path: ${{ steps.npm-cache-dir.outputs.cachedir }}
+        key: ${{ runner.os }}-npm-cache-${{ hashFiles('package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-npm-cache-
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci
+
+    # 头追双耳渲染用的 Steam Audio 预编译库（172MB 包，只取 arm64-v8a 的 .so），不放进仓库
+    - name: Restore Steam Audio library
+      id: sa-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/steamaudio
+        key: steamaudio-4.8.1-armv8
+
+    - name: Fetch Steam Audio prebuilt library
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        DEST="$GITHUB_WORKSPACE/android/sound-effects/src/main/jniLibs/arm64-v8a"
+        mkdir -p "$DEST"
+        if [ -f "$DEST/libphonon.so" ]; then
+          echo "libphonon.so 已存在，跳过下载"
+          exit 0
+        fi
+        if [ -f "$HOME/.cache/steamaudio/libphonon.so" ]; then
+          cp "$HOME/.cache/steamaudio/libphonon.so" "$DEST/libphonon.so"
+          echo "命中 Steam Audio 缓存"
+          exit 0
+        fi
+        ZIP="$RUNNER_TEMP/steamaudio.zip"
+        ok=0
+        for i in 1 2 3; do
+          rm -f "$ZIP"
+          if curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 900 \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/octet-stream" \
+              -o "$ZIP" \
+              "https://api.github.com/repos/ValveSoftware/steam-audio/releases/assets/354332142"; then
+            size=$(stat -c%s "$ZIP" 2>/dev/null || echo 0)
+            echo "下载完成：${size} 字节"
+            if [ "$size" -gt 150000000 ] && unzip -tq "$ZIP" >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            echo "::warning::Steam Audio 包不完整（${size} 字节），重试"
+          else
+            echo "::warning::Steam Audio 下载失败（第 ${i} 次），重试"
+          fi
+          sleep 5
+        done
+        if [ "$ok" -ne 1 ]; then
+          echo "::error::Steam Audio 下载失败，无法构建头追功能"
+          exit 1
+        fi
+        unzip -o -j "$ZIP" "steamaudio/lib/android-armv8/libphonon.so" -d "$DEST" >/dev/null
+        test -f "$DEST/libphonon.so"
+        mkdir -p "$HOME/.cache/steamaudio"
+        cp "$DEST/libphonon.so" "$HOME/.cache/steamaudio/libphonon.so"
+        ls -l "$DEST/libphonon.so"

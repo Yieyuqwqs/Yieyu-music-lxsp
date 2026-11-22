@@ -1,0 +1,56 @@
+{
+  "version": "1.9-Aurora-62",
+  "desc": "Aurora-62 · 完全回退到 M3 最后一版（加密桥也删掉）\n\n· 树 = f2ad272（Aurora-39 / M3-3）逐字节一致，只改三个版本号文件；\n· 加密桥（java_crypto / license_verify / license_keys / CoreCrypto / op license.verify）**整块删除**，\n  卡密验签回到 JS 本地实现（src/utils/licenseCard.js + src/config/licenseKey.ts 公钥）；\n· 40/41/46/47 四个热修一并作废：\n  - 切歌/seek 后进度可能卡 00:00（有声音、UI 不动，拖不动）；\n  - 冷启动可能把已验证用户弹到激活页（手点「激活并进入」可进）；\n  - 切后台 30s 回来 UI 可能显示暂停；\n  - 关于页可能显示「域 0/0」。\n\n版本 Aurora-62 / versionCode 67",
+  "history": [
+    {
+      "version": "1.9-Aurora-39",
+      "desc": "Aurora-39 · M3-3：存储读路径切到 C++（SQLite 为真源）\n  - getData：进程内缓存 -> C++ kv.get -> AsyncStorage 兜底（三级）\n  - 命中旧数据自动懒迁移：回填内存缓存并写回 C++，下次走真源\n  - saveData 同时更新缓存，避免重复异步往返\n  - 核心不可用/值被省略（>1MB）时自动退回 AsyncStorage，行为与旧版一致\n\n版本 Aurora-39 / versionCode 44"
+    },
+    {
+      "version": "1.9-Aurora-38",
+      "desc": "Aurora-38 · M3-2：非输入类域翻「事件单源」+ 全 15 域补齐回灌\n  - 新增 pushState：核心可用时只写 C++，本地缓存完全由事件驱动（核心异常时才本地兜底）\n  - guard / version 翻成单源：网络与服务端状态不再本地先改再补写，杜绝双源漂移\n  - 9 个域补齐 registerDomain 回灌：common/search/leaderboard/hotSearch/downloadList/sync/theme/userApi/dislikeList\n  - setting 也加回灌：冷启动把 C++ 里的设置灌回本地，跨进程恢复不再依赖 AsyncStorage\n  - 输入类（搜索词、滑块、设置）仍保留本地即时写入：否则打字/拖动会卡\n\n版本 Aurora-38 / versionCode 43"
+    },
+    {
+      "version": "1.9-Aurora-37",
+      "desc": "Aurora-37 · M3 第一步：状态耐久化 + 启动水合（setting 域也下沉，15/17）\n  - state.patch 每次都落 SQLite（key = state:<域>）；进程被杀也能恢复\n  - 启动时把 state:* 全捞回 StateBox，并主动推 core.state.bulk，杜绝与 TS 请求的竞态\n  - TS 侧启动水合：冷启动就把 C++ 里的状态灌回本地缓存 —— 缓存变成「可丢弃的展示层」\n  - setting 域下沉：设置项（读得最多、必须跨重启一致）进入真源\n  - 只剩 license 域（卡密/设备码，按计划放到 M4 安全迁移）\n\n版本 Aurora-37 / versionCode 42"
+    },
+    {
+      "version": "1.9-Aurora-36",
+      "desc": "Aurora-36 · M2 批 4：剩余 9 个域下沉（共 14/17 域）\n  - common / search / leaderboard / hotSearch / downloadList / sync / theme / userApi / dislikeList\n  - 统一用「action 包装器」：每个动作执行完自动把该域快照写进 C++ 真源，不会漏\n  - 只镜像控制类字段；下载任务表、用户源代码、歌单明细等大数据体留 TS（M3 交给 SQLite）\n  - license 域刻意不动：卡密与设备码属于 M4 的安全迁移，不在这批里碰\n\n版本 Aurora-36 / versionCode 41"
+    },
+    {
+      "version": "1.9-Aurora-35",
+      "desc": "Aurora-35 · M2 批 2+3：list / songlist / player 三域下沉\n  - player（播放状态机核心）：playInfo/playMusicInfo/musicInfo/isPlay/statusText/progress 等 10 个字段进 C++ 真源\n  - list：userList / activeListId / tempListMeta / fetchingListStatus\n  - songlist：只下沉元数据（source/tagId/sortId/page/total/limit/maxPage/info）\n  - 大数据体（歌单明细、播放历史、临时列表）仍留 TS 内存，避免每次 patch 过 JNI 传几十 KB\n  - 关于页自检行新增「域 N/字段 N」，可直观看到真源规模\n\n版本 Aurora-35 / versionCode 40"
+    },
+    {
+      "version": "1.9-Aurora-34",
+      "desc": "Aurora-34 · M2 第一批：C++ 状态真源（StateBox）+ guard/version 下沉\n  - 新增 state/state_box：域 -> 字段原始 JSON，patch 合并后把整域快照推回 JS\n  - 新 op：state.patch / state.get / state.all / state.clear；事件 topic core.state\n  - TS 侧只做镜像：action 写 C++，事件回灌覆盖本地 state，UI 与原有 state_event 完全不变\n  - 首批下沉 guard / version 两个域（含下载进度、忽略版本、弹窗可见性）\n  - 镜像期双源并存：任何一边坏掉界面都还能用，17 个域全部验证后再删镜像\n\n版本 Aurora-34 / versionCode 39"
+    },
+    {
+      "version": "1.9-Aurora-33",
+      "desc": "Aurora-33 · M1b：换 SQLite，大歌单可存（单值上限 16MB）\n  - 内置 SQLite amalgamation（public domain），WAL + synchronous=NORMAL + busy_timeout\n  - 统一走 BLOB：不再有 64KB 上限，大歌单/大 JSON 直接进库\n  - 自动迁移：首次打开把旧的 kv.txt（行式 base64）整体导入 SQLite，再改名 .imported\n  - 启动自愈：stop/reload 后重新打开 DB，不会因为一次重启把存储弄废\n  - 大值读取保护：>1MB 不回传（避免 JNI 传 16MB 字符串打爆内存）\n  - 填坑：锁序写成硬规矩（evMutex_ -> hostMutex_，持锁绝不 join/IO）；const 链上的 mutex/计数器一律 mutable\n\n版本 Aurora-33 / versionCode 38"
+    },
+    {
+      "version": "1.9-Aurora-32",
+      "desc": "Aurora-32 · M1a：C++ 侧 KV 存储落地（双写期开始）\n  - 新增 store/kv_store：行式文本 + base64 落盘，tmp+rename 原子替换，400ms 写盘节流\n  - 新 op：kv.set / kv.get / kv.remove / kv.flush；单值上限 256KB，脏数据不撑爆内存\n  - Java 侧在后台线程把 filesDir 交给 C++（文件 IO 绝不在 JS 线程发生）\n  - TS 侧双写：AsyncStorage 照旧，同时镜像一份进 C++ KV（>64KB 不镜像，留给 M1b）\n  - 关于页自检行新增 KV 条目数；读路径仍以 AsyncStorage 为准（零数据风险）\n\n版本 Aurora-32 / versionCode 37"
+    },
+    {
+      "version": "1.9-Aurora-31",
+      "desc": "Aurora-31 · M0 地基：Fat Core 正式开工（只加不改）\n  - 新增 android/core（libyieyu_core.so）+ RN 门面 YieyuCore：post 单向 / request 3s 硬超时 / onEvent 单线程出口\n  - 有界队列：命令 256、事件 1024；按 topic 限频，状态类事件覆盖式丢旧，绝不无限堆积\n  - GlobalRef 计数 + 宿主切换：RN reload 后旧宿主整块作废并重建，杜绝回调到死掉的 ReactContext\n  - 自审修掉两个真实 bug：stop() 持锁 join 线程的死锁；stats() 读命令队列未加锁的数据竞争\n  - 只加不改：播放/音效/HRTF/看门狗/强更 一律未碰；设置→关于 新增一行「核心自检」\n\n版本 Aurora-31 / versionCode 36"
+    },
+    {
+      "version": "1.9-Aurora-30",
+      "desc": "Aurora-30 · 修蓝牙「滋滋」声：16kHz 陡峭低通\n  - 问题: 蓝牙耳机下胆机软削波在 16kHz 以上堆出极高频谐波，SBC/AAC 带宽吃不下，回放成「滋滋」毛刺\n  - 修法: 味精模块输出端强制挂 16kHz 陡峭低通（Butterworth 级联）—— 44.1/48kHz 12 阶、96kHz 20 阶、192kHz 32 阶，双精度状态\n  - 实测（44.1kHz）: 15kHz 0.1dB 不动 · 17kHz -21dB · 18kHz -45.6dB · 20kHz -86.7dB\n  - 防爆音: 低通常驻运行（状态永远热身）+ 20ms 交叉淡变，切换实测 4.032% vs 稳态 4.037%\n  - 关于 ADAA 阈值: 1e-7 只是数值兜底（防除零），不是音质旋钮；真正的问题是 16k 以上没切干净，所以改用低通\n  - 新增开关「16kHz 低通（蓝牙防毛刺）」，默认开\n  - 流程: JS 镜像 22 项测试全绿（新增 4 项低通验收）后才搬进 C++\n\n版本 Aurora-30 / versionCode 35"
+    },
+    {
+      "version": "1.9-Aurora-29",
+      "desc": "Aurora-29 · 模拟黑胶 / 胆机（纯 C++ 味精模块）\n- 新增: 【胆机软削波】偏置 tanh（b≈0.6/驱动，随驱动联动），产生偶次谐波让声音变暖 —— 实测 1kHz 下 H2 比 H3 高 8.9dB，THD 随加量 11%→33% 单调上升\n- 新增: 【黑胶底噪】物理级信号模型：白噪 → 200Hz 高通 + 8kHz 低通塑形出嘶声，泊松到达 + 2 极点谐振器出随机颗粒（重尾幅度，实测峰度 22）；没有一个是采样音频\n- 新增: 【肉摇 Wow&Flutter】0.55Hz + 1.1Hz + 9.7Hz 三路相位叠加（pitch 预算 0.35%）+ 极慢随机漂移 + 0.2dB 幅度呼吸，6 点 Lagrange 分数延迟\n- 新增: 一根【味精加量】滑块 0~100（0 = 逐位直通）+ 淡/香/醉 三档预设 + 胆机/底噪/肉摇三个子开关 + 高保真 4× 过采样开关\n- 抗混叠: 4 倍过采样（半带 32 抽头多相）+ 一阶 ADAA，听觉频段非谐波实测 -64dB ~ -75dB；管线升到 96/192kHz 时自动降到 2×/1× 省电\n- 抗爆音: 参数二阶平滑 + 干湿交叉淡变；参数跳变时重算反导数基线（否则 ADAA 会算出 877% 满刻度的爆音）；内核自带 12Hz 直流阻断\n- 位置: 混响与直流阻断之后、头追与限幅之前（作用于整条混音，含混响尾巴）\n- 流程: 先写 JS 镜像 sim.js + 17 项测试全绿，才逐行搬进 C++\n\n版本 1.9-Aurora-29 / versionCode 34"
+    },
+    {
+      "version": "1.9-Aurora-28",
+      "desc": "Aurora-28 · 31 段均衡器交互定稿（横向进度条卡片）\n- 改: 全面替换交互 —— 不再是图上划线，改成【横向进度条卡片】：屏幕一排 3 个多，左右滑像刷歌单一样切频段\n- 新增: 长按解锁防误触 —— 进度条默认锁死，长按 0.2 秒发光 + 轻震才解锁，此时左右推拉加减 dB，松手立刻锁回去\n- 保留: 上面的 31 段曲线图固定不动，调值时对应圆点实时上下变化；点曲线圆点可直接跳到那一段卡片\n- 新增: 撤销 / 平滑两个按钮，手调出来的锯齿曲线一键磨平\n- 说明: 音频底层（C++ 31 段内核、交叉淡变、自动预衰减）与十段/关闭切换一字节未动，只重做 UI 交互\n\n版本 1.9-Aurora-28 / versionCode 33"
+    }
+  ],
+  "versionCode": 67,
+  "message": "revert: Aurora-62 —— 完全回退到 M3 最后一版（f2ad272），加密桥也删除\n\n老板指令：「完全回退到 M3，加密桥也删掉。」\n执行方式：新 commit 的 tree 直接以 f2ad272 的 tree 为基底，\n**只覆盖三个版本号文件**（package.json / update.json / publish/version.json），\n其余 900+ 个文件与 Aurora-39 逐字节一致。\n\n【本版删掉的（Aurora-61 里还留着的）】\n· 加密桥整块：cpp/jni/java_crypto.{h,cpp}、cpp/jni/jni_scope.h、\n  cpp/license/license_verify.{h,cpp}、cpp/license/license_keys.h、\n  java/.../CoreCrypto.java、proguard 的 -keep、op license.verify、scripts/gen-license-keys.js 的 key 导出；\n· 卡密验签回到 JS：src/utils/licenseCard.js + src/config/licenseKey.ts（公钥重新进仓库/进 bundle）；\n· 4 个 P0 热修同时作废：Aurora-40（state.patch 丢参）、Aurora-41（进度卡 00:00）、\n  Aurora-46（冷启动误拦激活页 + 闪屏 + 前台重同步底座）、Aurora-47（切后台回来显示暂停）。\n\n【本版恢复回来的（Aurora-61 删掉的 M3 文件）】\n· src/config/licenseKey.ts、.gitattributes、.github/workflows/soak.yml、\n  src/components/common/ScaledImage.tsx、src/screens/PlayDetail/components/ImmersiveBg.tsx、\n  src/utils/musicSdk/{kg/temp/musicSearch-new.js,kg/temp/songList-new.js,mg/temp/leaderboard-old.js}\n  （都是 A42/M6 清理时删/加的东西，回 M3 就都回来了）\n\n【已知代价（老板已认可「完全回退」）】\n切歌/seek 后进度卡 00:00；冷启动可能把已验证用户弹到激活页；\n切后台回来 UI 可能显示暂停；关于页可能「域 0/0」；M5 震动回到 Java 实现；\n无 withTimeout 契约（跨语言调用只靠 Java 3s / C++ 8s 兜底）。\n\n【本地门禁】ops.js 的 MUST 按 M3 口径（license.* 已从 C++ 删除）；\ngate.js 三段重跑并重定裸 await 基线（回 M3 后自然回升，不是新增技术债）。\n\n版本 1.9-Aurora-62 / versionCode 67"
+}

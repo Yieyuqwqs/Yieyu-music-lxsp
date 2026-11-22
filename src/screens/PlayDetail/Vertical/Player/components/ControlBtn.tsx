@@ -1,0 +1,92 @@
+import { Pressable, StyleSheet, View } from 'react-native'
+import { Icon } from '@/components/common/Icon'
+// import { useIsPlay } from '@/store/player/hook'
+import { playNext, playPrev, togglePlay } from '@/core/player/player'
+import { useIsPlay } from '@/store/player/hook'
+import { useWindowSize } from '@/utils/hooks'
+import { BTN_WIDTH } from './MoreBtn/Btn'
+import { useMemo } from 'react'
+
+const PrevBtn = ({ size }: { size: number }) => {
+  const handlePlayPrev = () => {
+    void playPrev()
+  }
+  return (
+    <Pressable style={({ pressed }) => [{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }, pressed && { transform: [{ scale: 0.9 }] }]} hitSlop={8} onPress={handlePlayPrev}>
+      <Icon name='prevMusic' color='#ffffff' rawSize={size * 0.62} />
+    </Pressable>
+  )
+}
+const NextBtn = ({ size }: { size: number }) => {
+  const handlePlayNext = () => {
+    void playNext()
+  }
+  return (
+    <Pressable style={({ pressed }) => [{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }, pressed && { transform: [{ scale: 0.9 }] }]} hitSlop={8} onPress={handlePlayNext}>
+      <Icon name='nextMusic' color='#ffffff' rawSize={size * 0.62} />
+    </Pressable>
+  )
+}
+
+const TogglePlayBtn = ({ size }: { size: number }) => {
+  const isPlay = useIsPlay()
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.toggleBtn, { width: size, height: size, borderRadius: size / 2 }, pressed && { transform: [{ scale: 0.9 }] }]}
+      hitSlop={8}
+      onPress={togglePlay}
+    >
+      <Icon name={isPlay ? 'pause' : 'play'} color='#ffffff' rawSize={size * 0.5} />
+    </Pressable>
+  )
+}
+
+const MAX_SIZE = BTN_WIDTH * 1.6
+const MIN_SIZE = BTN_WIDTH * 1.2
+
+export default () => {
+  const winSize = useWindowSize()
+  const maxHeight = Math.max(winSize.height * 0.11, MIN_SIZE)
+  const containerStyle = useMemo(() => {
+    return {
+      ...styles.conatiner,
+      maxHeight,
+    }
+  }, [maxHeight])
+  const size = Math.min(Math.max(winSize.width * 0.33 * global.lx.fontSize * 0.4, MIN_SIZE), MAX_SIZE, maxHeight)
+
+  return (
+    <View style={containerStyle}>
+      <PrevBtn size={size} />
+      <TogglePlayBtn size={size}/>
+      <NextBtn size={size} />
+    </View>
+  )
+}
+
+
+const styles = StyleSheet.create({
+  toggleBtn: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  conatiner: {
+    flexDirection: 'row',
+    justifyContent: 'space-evenly',
+    alignItems: 'center',
+    flexGrow: 1,
+    flexShrink: 1,
+    paddingHorizontal: '4%',
+    paddingVertical: 22,
+    // backgroundColor: 'rgba(0, 0, 0, .1)',
+  },
+  cotrolBtn: {
+    justifyContent: 'center',
+    alignItems: 'center',
+
+    // backgroundColor: '#ccc',
+    shadowOpacity: 1,
+    textShadowRadius: 1,
+  },
+})

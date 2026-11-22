@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:initialLayout="@layout/yieyu_widget"
+    android:minWidth="230dp"
+    android:minHeight="72dp"
+    android:maxResizeWidth="360dp"
+    android:minResizeWidth="180dp"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="0"
+    android:widgetCategory="home_screen"
+    android:description="@string/yieyu_widget_desc" />

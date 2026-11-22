@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Yieyu 局域网传歌</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: #0f1014; color: #e8eaf0;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: #8d93a4; font-size: 13px; margin-bottom: 20px; line-height: 1.6; }
+  .zone {
+    border: 2px dashed #33384a; border-radius: 18px; padding: 40px 20px; text-align: center;
+    transition: .18s; background: #15171f; cursor: pointer;
+  }
+  .zone.hot { border-color: #4daf7c; background: #17211c; }
+  .zone strong { display: block; font-size: 16px; margin-bottom: 6px; }
+  .zone span { color: #8d93a4; font-size: 13px; }
+  .list { margin-top: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .item { background: #15171f; border-radius: 12px; padding: 12px 14px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .state { color: #8d93a4; flex: none; }
+  .bar { height: 4px; border-radius: 2px; background: #262a36; margin-top: 8px; overflow: hidden; }
+  .fill { height: 100%; width: 0; background: #4daf7c; transition: width .12s; }
+  .ok .state { color: #4daf7c; }
+  .err .state { color: #e0645f; }
+  footer { margin-top: 28px; color: #5d6376; font-size: 12px; line-height: 1.8; word-break: break-all; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Yieyu · 局域网传歌</h1>
+  <div class="sub">把歌拖进下面的框，或点一下选择文件。传完在手机 App 里点「导入刚收到的歌」即可入歌单。</div>
+  <div class="zone" id="zone">
+    <strong>拖拽音频到这里</strong>
+    <span>支持 flac / mp3 / m4a / wav / ape / ogg，可多选</span>
+  </div>
+  <input type="file" id="picker" multiple accept="audio/*,.flac,.mp3,.m4a,.wav,.ape,.ogg,.aac">
+  <div class="list" id="list"></div>
+  <footer>保存目录：%%DIR%%</footer>
+</div>
+<script>
+var TOKEN = "%%TOKEN%%";
+var zone = document.getElementById('zone');
+var picker = document.getElementById('picker');
+var list = document.getElementById('list');
+var queue = [];
+var busy = false;
+
+zone.addEventListener('click', function () { picker.click(); });
+picker.addEventListener('change', function () { enqueue(picker.files); picker.value = ''; });
+['dragenter', 'dragover'].forEach(function (name) {
+  zone.addEventListener(name, function (e) { e.preventDefault(); zone.classList.add('hot'); });
+});
+['dragleave', 'drop'].forEach(function (name) {
+  zone.addEventListener(name, function (e) { e.preventDefault(); zone.classList.remove('hot'); });
+});
+zone.addEventListener('drop', function (e) {
+  if (e.dataTransfer && e.dataTransfer.files) enqueue(e.dataTransfer.files);
+});
+
+function enqueue(files) {
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    if (!file || file.size <= 0) continue;
+    var node = document.createElement('div');
+    node.className = 'item';
+    node.innerHTML = '<div class="row"><div class="name"></div><div class="state">等待</div></div><div class="bar"><div class="fill"></div></div>';
+    node.querySelector('.name').textContent = file.name;
+    list.appendChild(node);
+    queue.push({ file: file, node: node });
+  }
+  pump();
+}
+
+function pump() {
+  if (busy) return;
+  var job = queue.shift();
+  if (!job) return;
+  busy = true;
+  upload(job, function () { busy = false; pump(); });
+}
+
+function human(n) {
+  if (n > 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n > 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+function upload(job, done) {
+  var file = job.file;
+  var node = job.node;
+  var state = node.querySelector('.state');
+  var fill = node.querySelector('.fill');
+  var url = '/upload/' + TOKEN + '?name=' + encodeURIComponent(file.name);
+  var xhr = new XMLHttpRequest();
+  xhr.open('PUT', url, true);
+  xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+  var started = Date.now();
+  state.textContent = human(file.size);
+  xhr.upload.onprogress = function (e) {
+    if (!e.lengthComputable) return;
+    var percent = Math.round(e.loaded / e.total * 100);
+    fill.style.width = percent + '%';
+    var speed = e.loaded / Math.max(0.4, (Date.now() - started) / 1000);
+    state.textContent = percent + '% · ' + human(speed) + '/s';
+  };
+  xhr.onload = function () {
+    if (xhr.status === 200) {
+      node.classList.add('ok');
+      fill.style.width = '100%';
+      state.textContent = '完成 · ' + human(file.size);
+    } else {
+      node.classList.add('err');
+      state.textContent = '失败 ' + xhr.status;
+    }
+    done();
+  };
+  xhr.onerror = function () {
+    node.classList.add('err');
+    state.textContent = '连接失败';
+    done();
+  };
+  xhr.send(file);
+}
+</script>
+</body>
+</html>
