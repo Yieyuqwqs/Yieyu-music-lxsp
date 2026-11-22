@@ -10,7 +10,7 @@ import { SourceResolver } from './resolver'
 import { LxspTransport, resolveFetch, type FetchLike } from './transport'
 import { RemoteProvider } from './remote'
 import { parseManifest } from './manifest'
-import { StandardApiProvider, probeStandardApi, STANDARD_SOURCES } from './standard-api'
+import { ApiProfileProvider, probeApiProfiles } from './api-profiles'
 import { toLegacyQuery, toLegacyMusicItem } from './local'
 import { LxspError, toLxspError } from './errors'
 import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
@@ -121,15 +121,14 @@ export class SourceEngine {
         log('info', `LXSP endpoint ready: ${baseUrl} (${manifest.provider.id} v${manifest.provider.version}, ${manifest.sources.length} sources)`)
       } catch (error) {
         const lxErr = toLxspError(error, 'network')
-        // 只有 LXSP v2 端点能被接受：认不出就直接说清楚，不做旧协议兼容
-        // 不是 LXSP v2？按「API_URL + API_KEY」标准模式再试一次（用户不用懂协议）
+        // 不是 LXSP v2？按 API_URL + API_KEY 依次探测旧脚本后端的三族接口（App 不执行任何脚本）
         const probeFetch = options.fetchImpl ?? resolveFetch()
         const probe = probeFetch
-          ? await probeStandardApi({ baseUrl, token: endpoint.token ?? options.token ?? null, fetchImpl: probeFetch, timeoutMs: options.timeoutMs }).catch(() => null)
+          ? await probeApiProfiles({ baseUrl, token: endpoint.token ?? options.token ?? null, fetchImpl: probeFetch, timeoutMs: options.timeoutMs }).catch(() => null)
           : null
         if (probe) {
-          for (const decl of STANDARD_SOURCES) {
-            registry.add(new StandardApiProvider({
+          for (const decl of probe.sources) {
+            registry.add(new ApiProfileProvider({
               probe,
               source: decl,
               token: endpoint.token ?? options.token ?? null,
@@ -140,16 +139,16 @@ export class SourceEngine {
           endpoints.push({
             baseUrl,
             ok: true,
-            provider: 'API 模式',
-            sources: STANDARD_SOURCES.map(decl => decl.key),
+            provider: probe.profile,
+            sources: probe.sources.map(decl => decl.key),
             latencyMs: Date.now() - startedAt,
           })
-          log('info', `standard API mode adapted: ${baseUrl} (${STANDARD_SOURCES.length} sources)`)
+          log('info', `api profile adapted: ${baseUrl} (${probe.profile}, ${probe.sources.length} sources)`)
           continue
         }
 
         const hint = lxErr.code === 'bad_response' || lxErr.code === 'not_found'
-          ? '（既不是 LXSP v2，也不认 API 模式：请确认 API_URL 填的是 /music/url 所在的服务）'
+          ? '（既不是 LXSP v2，也没认出任何已知接口：确认 API_URL 是否指向音源服务根地址）'
           : ''
         endpoints.push({ baseUrl, ok: false, error: `${lxErr.code}: ${lxErr.message}${hint}`, latencyMs: Date.now() - startedAt })
         log('warn', `endpoint failed: ${baseUrl} -> ${lxErr.code}: ${lxErr.message}`)

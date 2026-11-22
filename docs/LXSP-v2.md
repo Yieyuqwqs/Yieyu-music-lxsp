@@ -338,26 +338,24 @@ resolveUrl(source, id, wantQuality):
 
 ---
 
-## 10.6 标准 API 模式（只填 API_URL + API_KEY）
+## 10.6 旧脚本后端兼容（只填 API_URL + API_KEY，App 内不执行任何脚本）
 
-设置页只有两格：`API_URL` 与 `API_KEY`。客户端按顺序判断端点形态，用户不需要懂协议：
+设置页只有两格。客户端按顺序判断端点属于哪一族，用户不需要懂协议：
 
-1. 先当 **LXSP v2**（GET `/manifest`）；
-2. 没有 `/manifest` 时按 **标准 API 模式** 再试一次：
+| 顺序 | 族 | 探测特征 | 取直链 | 鉴权 |
+| --- | --- | --- | --- | --- |
+| 1 | **LXSP v2** | `GET /manifest` 成功 | `GET /url/{source}/{id}?quality=` | 按 manifest 声明 |
+| 2 | **lx-source 系** | `GET /api/v0/` 回自述 JSON | `GET /api/v0/url/{source}/{id}/{quality}`（另有 `/api/v0/lrc|pic`） | `?key=` |
+| 3 | **wwwweb 系** | `POST /music/url` 回带 `code` 的 JSON | `POST /music/url` `{source,musicId,quality}` | `X-Api-Key` |
+| 4 | **通用 JSON 系** | `POST /api/parse` 或 `POST /url` 回带 `code` 的 JSON | 同路径，兼容 `url`/`data.url`/`data.data.url` | 三种全带 |
 
-```
-POST {API_URL}/music/url
-Header: X-Api-Key: {API_KEY}
-Body:   { "source": "kw", "musicId": "<id>", "quality": "320k" }
+规则：
 
-成功: { "code": 200, "url": "https://..." }
-失败: { "code": 403, "message": "鉴权失败" }
-```
-
-识别方式：`POST /music/url` 返回带 `code`/`url`/`message` 的 JSON 即认定为该模式；
-错误按 §4.3 归一（`403/鉴权失败`→`unauthorized`，`无版权`→`upstream_denied`，`未找到`→`not_found`，`5xx`→`upstream_error`）。
-
-该模式只声明 `url` 能力（不假装有歌词/封面/搜索）；要全能力就上 LXSP v2 端点。
+* **探测判定只看「有没有 code 字段或直链」**，光有 `message` 的 404 不算认出（避免把错误页当接口）。
+* 兼容模式下鉴权**三种一起带**（`X-Api-Key` + `Authorization: Bearer` + `?key=`），各后端忽略多余项即可。
+* 直链提取按 `url → data → music → src → playUrl → data.url …` 依次尝试；错误文案取 `message/msg/error/info`，按 §4.3 归一错误码。
+* 只有 lx-source 族声明 `lyric/pic`；其余只声明 `url`，不假装有能力。
+* **LXSP v2 永远优先**：有 `/manifest` 就不会落到兼容层 —— 新版能力和旧脚本后端的兼容同时存在，谁也不删。
 
 ## 11. 落地位置
 
