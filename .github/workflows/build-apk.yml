@@ -54,7 +54,7 @@ jobs:
           set -euo pipefail
           node scripts/set-variant.js client
           cd android
-          ./gradlew assembleRelease --no-daemon \
+          sh gradlew assembleRelease --no-daemon \
             -PMYAPP_UPLOAD_STORE_FILE="${SIGNING_STORE_FILE}" \
             -PMYAPP_UPLOAD_STORE_TYPE="${SIGNING_STORE_TYPE}" \
             -PMYAPP_UPLOAD_KEY_ALIAS="${SIGNING_KEY_ALIAS}" \
@@ -241,7 +241,7 @@ jobs:
           set -euo pipefail
           node scripts/set-variant.js admin
           cd android
-          ./gradlew assembleRelease --no-daemon -PyieyuAdmin=1 \
+          sh gradlew assembleRelease --no-daemon -PyieyuAdmin=1 \
             -PMYAPP_UPLOAD_STORE_FILE="${SIGNING_STORE_FILE}" \
             -PMYAPP_UPLOAD_STORE_TYPE="${SIGNING_STORE_TYPE}" \
             -PMYAPP_UPLOAD_KEY_ALIAS="${SIGNING_KEY_ALIAS}" \
