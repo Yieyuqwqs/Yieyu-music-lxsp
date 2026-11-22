@@ -10,7 +10,7 @@ import { SourceResolver } from './resolver'
 import { LxspTransport, resolveFetch, type FetchLike } from './transport'
 import { RemoteProvider } from './remote'
 import { parseManifest } from './manifest'
-import { CustomApiProvider, type CustomSourceConfig } from './custom-source'
+import { StandardApiProvider, probeStandardApi, STANDARD_SOURCES } from './standard-api'
 import { toLegacyQuery, toLegacyMusicItem } from './local'
 import { LxspError, toLxspError } from './errors'
 import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
@@ -29,8 +29,6 @@ export interface EngineInitOptions {
   token?: string | null
   fetchImpl?: FetchLike
   timeoutMs?: number
-  /** 配置驱动的通用 API 源（用户填 地址+密钥+提取规则） */
-  customSources?: CustomSourceConfig[]
   /** 成功播放后记住音源 */
   rememberSource?: (info: { source: LX.Source, name: string, singer: string }) => void
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
@@ -124,23 +122,37 @@ export class SourceEngine {
       } catch (error) {
         const lxErr = toLxspError(error, 'network')
         // 只有 LXSP v2 端点能被接受：认不出就直接说清楚，不做旧协议兼容
+        // 不是 LXSP v2？按「API_URL + API_KEY」标准模式再试一次（用户不用懂协议）
+        const probeFetch = options.fetchImpl ?? resolveFetch()
+        const probe = probeFetch
+          ? await probeStandardApi({ baseUrl, token: endpoint.token ?? options.token ?? null, fetchImpl: probeFetch, timeoutMs: options.timeoutMs }).catch(() => null)
+          : null
+        if (probe) {
+          for (const decl of STANDARD_SOURCES) {
+            registry.add(new StandardApiProvider({
+              probe,
+              source: decl,
+              token: endpoint.token ?? options.token ?? null,
+              priority: index * 10 + 5,
+              fetchImpl: probeFetch!,
+            }))
+          }
+          endpoints.push({
+            baseUrl,
+            ok: true,
+            provider: 'API 模式',
+            sources: STANDARD_SOURCES.map(decl => decl.key),
+            latencyMs: Date.now() - startedAt,
+          })
+          log('info', `standard API mode adapted: ${baseUrl} (${STANDARD_SOURCES.length} sources)`)
+          continue
+        }
+
         const hint = lxErr.code === 'bad_response' || lxErr.code === 'not_found'
-          ? '（该地址不是 LXSP v2 音源：缺少 /manifest）'
+          ? '（既不是 LXSP v2，也不认 API 模式：请确认 API_URL 填的是 /music/url 所在的服务）'
           : ''
         endpoints.push({ baseUrl, ok: false, error: `${lxErr.code}: ${lxErr.message}${hint}`, latencyMs: Date.now() - startedAt })
-        log('warn', `LXSP endpoint failed: ${baseUrl} -> ${lxErr.code}: ${lxErr.message}`)
-      }
-    }
-
-    // 用户显式配置的通用源：优先级最高（priority 默认 0，排在端点前面）
-    for (const config of options.customSources ?? []) {
-      const fetchImpl = options.fetchImpl ?? resolveFetch()
-      if (!fetchImpl) break
-      try {
-        registry.add(new CustomApiProvider({ config, fetchImpl, timeoutMs: options.timeoutMs }))
-        log('info', `custom source ready: ${config.name ?? config.baseUrl} -> ${config.source}`)
-      } catch (error) {
-        log('warn', `custom source invalid: ${(error as Error).message}`)
+        log('warn', `endpoint failed: ${baseUrl} -> ${lxErr.code}: ${lxErr.message}`)
       }
     }
 
