@@ -10,6 +10,7 @@ import { SourceResolver } from './resolver'
 import { LxspTransport, resolveFetch, type FetchLike } from './transport'
 import { RemoteProvider } from './remote'
 import { parseManifest } from './manifest'
+import { CustomApiProvider, type CustomSourceConfig } from './custom-source'
 import { toLegacyQuery, toLegacyMusicItem } from './local'
 import { LxspError, toLxspError } from './errors'
 import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
@@ -28,6 +29,8 @@ export interface EngineInitOptions {
   token?: string | null
   fetchImpl?: FetchLike
   timeoutMs?: number
+  /** 配置驱动的通用 API 源（用户填 地址+密钥+提取规则） */
+  customSources?: CustomSourceConfig[]
   /** 成功播放后记住音源 */
   rememberSource?: (info: { source: LX.Source, name: string, singer: string }) => void
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
@@ -126,6 +129,18 @@ export class SourceEngine {
           : ''
         endpoints.push({ baseUrl, ok: false, error: `${lxErr.code}: ${lxErr.message}${hint}`, latencyMs: Date.now() - startedAt })
         log('warn', `LXSP endpoint failed: ${baseUrl} -> ${lxErr.code}: ${lxErr.message}`)
+      }
+    }
+
+    // 用户显式配置的通用源：优先级最高（priority 默认 0，排在端点前面）
+    for (const config of options.customSources ?? []) {
+      const fetchImpl = options.fetchImpl ?? resolveFetch()
+      if (!fetchImpl) break
+      try {
+        registry.add(new CustomApiProvider({ config, fetchImpl, timeoutMs: options.timeoutMs }))
+        log('info', `custom source ready: ${config.name ?? config.baseUrl} -> ${config.source}`)
+      } catch (error) {
+        log('warn', `custom source invalid: ${(error as Error).message}`)
       }
     }
 

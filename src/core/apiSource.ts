@@ -13,6 +13,7 @@ import { rememberSource } from './sourceMemory'
 import {
   sourceEngine,
   parseEndpoints,
+  parseCustomSources,
   type EngineInitResult,
   type EndpointStatus,
 } from './source'
@@ -47,9 +48,17 @@ export const initSourceEngine = async(): Promise<EngineInitResult> => {
   const setting = settingState.setting
   const endpoints = parseEndpoints(setting['common.lxspEndpoints'], setting['common.lxspToken'])
 
+  let customSources: ReturnType<typeof parseCustomSources> = []
+  try {
+    customSources = parseCustomSources(setting['common.customSources'])
+  } catch (error) {
+    writeLog.warn(`自定义源配置无效：${(error as Error).message}`)
+  }
+
   const result = await sourceEngine.init({
     endpoints,
     token: setting['common.lxspToken'] || null,
+    customSources,
     rememberSource: ({ source, name, singer }) => {
       if (!name) return
       rememberSource({ name, singer, source })

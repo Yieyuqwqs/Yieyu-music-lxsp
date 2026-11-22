@@ -10,11 +10,12 @@ import { TextInput, View } from 'react-native'
 import SubTitle from '../../components/SubTitle'
 import Button from '../../components/Button'
 import Text from '@/components/common/Text'
-import { createStyle } from '@/utils/tools'
+import { createStyle, toast } from '@/utils/tools'
 import { useI18n } from '@/lang'
 import { useSettingValue } from '@/store/setting/hook'
 import { updateSetting } from '@/core/common'
 import { getEngineStatus, probeEndpoints, setApiSource, type SourceEngineStatus } from '@/core/apiSource'
+import { parseCustomSources } from '@/core/source'
 import { useTheme } from '@/store/theme/hook'
 
 const refreshDelay = 800
@@ -24,26 +25,38 @@ export default memo(() => {
   const theme = useTheme()
   const savedEndpoints = useSettingValue('common.lxspEndpoints')
   const savedToken = useSettingValue('common.lxspToken')
+  const savedCustom = useSettingValue('common.customSources')
   const [endpointsDraft, setEndpointsDraft] = useState(savedEndpoints)
   const [tokenDraft, setTokenDraft] = useState(savedToken)
+  const [customDraft, setCustomDraft] = useState(savedCustom)
   const [status, setStatus] = useState<SourceEngineStatus>(() => getEngineStatus())
   const [probing, setProbing] = useState(false)
 
   useEffect(() => { setEndpointsDraft(savedEndpoints) }, [savedEndpoints])
   useEffect(() => { setTokenDraft(savedToken) }, [savedToken])
+  useEffect(() => { setCustomDraft(savedCustom) }, [savedCustom])
 
   const refresh = useCallback(() => {
     setStatus(getEngineStatus())
   }, [])
 
   const handleSave = useCallback(() => {
+    // 通用源是自由 JSON，保存前先校验，别让一个逗号把音源全搞挂
+    try {
+      const count = parseCustomSources(customDraft).length
+      if (count) toast(`已启用 ${count} 个通用 API 源`)
+    } catch (error) {
+      toast(`通用源配置有误：${(error as Error).message}`, 'long')
+      return
+    }
     updateSetting({
       'common.lxspEndpoints': endpointsDraft.trim(),
       'common.lxspToken': tokenDraft.trim(),
+      'common.customSources': customDraft.trim(),
     })
     setApiSource('lxsp')
     setTimeout(refresh, refreshDelay)
-  }, [endpointsDraft, tokenDraft, refresh])
+  }, [endpointsDraft, tokenDraft, customDraft, refresh])
 
   const handleProbe = useCallback(() => {
     setProbing(true)
@@ -99,6 +112,23 @@ export default memo(() => {
         />
       </View>
 
+      <View style={styles.field}>
+        <Text size={13} color={theme['c-font-label']}>通用 API 源（JSON，可留空）</Text>
+        <TextInput
+          style={{ ...styles.input, height: 110, textAlignVertical: 'top', color: theme['c-font'], borderColor: theme['c-350'] }}
+          value={customDraft}
+          onChangeText={setCustomDraft}
+          placeholder={'[{"name":"某某解析","baseUrl":"https://api.example.com","token":"xxx","source":"kw","request":{"method":"POST","path":"/api/parse","body":{"id":"{id}","src":"{source}"},"auth":{"in":"header","name":"X-Api-Key"}},"response":{"url":"$.data.url","error":"$.msg"}}]'}
+          placeholderTextColor={theme['c-450']}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <Text size={12} color={theme['c-500']} style={styles.hint}>
+          {'填了就走你的接口：{id}/{source}/{quality} 会被替换，响应按 JSONPath 取（如 $.data.url）'}
+        </Text>
+      </View>
+
       <View style={styles.btn}>
         <Button onPress={handleSave}>保存并重连</Button>
         <Button onPress={handleProbe} disabled={probing}>{probing ? '检测中…' : '测试连接'}</Button>
@@ -147,5 +177,9 @@ const styles = createStyle({
   endpoint: {
     marginBottom: 6,
     lineHeight: 18,
+  },
+  hint: {
+    marginTop: 6,
+    lineHeight: 16,
   },
 })

@@ -32,6 +32,12 @@ declare global {
        */
       'common.lxspToken': string
 
+      /**
+       * 通用 API 源配置（JSON 数组字符串）：地址 + 密钥 + 请求模板 + 提取规则
+       * 填了就能把任意解析服务器当音源用
+       */
+      'common.customSources': string
+
 
       /**
        * 音源名称类型，原名、别名
