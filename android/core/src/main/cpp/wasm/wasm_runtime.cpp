@@ -15,6 +15,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <cstring>
+#include <new>
 #include <cstdlib>
 #include <string>
 
@@ -39,6 +40,18 @@ struct WasmPlugin {
 };
 
 JavaVM* g_vm = nullptr;
+
+// 插件传进来的指针一律当敌意输入：先验范围，再解引用
+inline bool guest_range(IM3Runtime runtime, uint32_t ptr, uint32_t len, uint8_t** base, uint32_t* size_out) {
+  uint32_t size = 0;
+  uint8_t* memory = runtime ? m3_GetMemory(runtime, &size, 0) : nullptr;
+  if (!memory) return false;
+  if (ptr > size) return false;
+  if (len > size - ptr) return false;
+  *base = memory;
+  *size_out = size;
+  return true;
+}
 thread_local JNIEnv* t_env = nullptr;
 thread_local WasmPlugin* t_plugin = nullptr;
 
@@ -77,9 +90,9 @@ uint32_t write_guest_string(WasmPlugin* plugin, const std::string& text) {
   if (m3_CallV(plugin->alloc, arg) != m3Err_none) return 0;
   m3_GetResultsV(plugin->alloc, &ptr);
   if (!ptr) return 0;
+  uint8_t* memory = nullptr;
   uint32_t size = 0;
-  uint8_t* memory = m3_GetMemory(plugin->runtime, &size, 0);
-  if (!memory || ptr + arg > size) return 0;
+  if (!guest_range(plugin->runtime, ptr, arg, &memory, &size)) return 0;
   memcpy(memory + ptr, text.c_str(), arg);
   return ptr;
 }
@@ -91,7 +104,12 @@ const void* host_http(IM3Runtime runtime, IM3ImportContext ctx, uint64_t* sp, vo
   uint32_t urlLen = (uint32_t) sp[1];
   uint32_t bodyPtr = (uint32_t) sp[2];
   uint32_t bodyLen = (uint32_t) sp[3];
-  auto* base = static_cast<uint8_t*>(mem);
+  uint8_t* base = nullptr;
+  uint32_t size = 0;
+  if (!guest_range(runtime, urlPtr, urlLen, &base, &size)) m3ApiReturnValue(0u);
+  if (urlLen > 2048) m3ApiReturnValue(0u);
+  if (bodyLen && !guest_range(runtime, bodyPtr, bodyLen, &base, &size)) m3ApiReturnValue(0u);
+  if (bodyLen > 64 * 1024) m3ApiReturnValue(0u);
   std::string url(reinterpret_cast<char*>(base + urlPtr), urlLen);
   std::string body = bodyLen ? std::string(reinterpret_cast<char*>(base + bodyPtr), bodyLen) : std::string();
   std::string response = call_java_http(url, body);
@@ -103,7 +121,10 @@ const void* host_log(IM3Runtime runtime, IM3ImportContext ctx, uint64_t* sp, voi
   if (!mem) return nullptr;
   uint32_t ptr = (uint32_t) sp[0];
   uint32_t len = (uint32_t) sp[1];
-  auto* base = static_cast<uint8_t*>(mem);
+  (void) mem;
+  uint8_t* base = nullptr;
+  uint32_t size = 0;
+  if (!guest_range(runtime, ptr, len, &base, &size)) return nullptr;
   if (len > 4096) len = 4096;
   std::string text(reinterpret_cast<char*>(base + ptr), len);
   WASM_LOGI("plugin: %s", text.c_str());
@@ -126,7 +147,8 @@ Java_cn_toside_music_core_CoreModule_nativeWasmLoad(JNIEnv* env, jclass, jbyteAr
   if (!code) return 0;
   env->GetByteArrayRegion(bytes, 0, len, reinterpret_cast<jbyte*>(code));
 
-  auto* plugin = new WasmPlugin();
+  auto* plugin = new (std::nothrow) WasmPlugin();
+  if (!plugin) { free(code); return 0; }
   plugin->env = m3_NewEnvironment();
   plugin->runtime = plugin->env ? m3_NewRuntime(plugin->env, 64 * 1024, nullptr) : nullptr;
   if (!plugin->runtime) {
@@ -177,9 +199,15 @@ Java_cn_toside_music_core_CoreModule_nativeWasmResolve(JNIEnv* env, jclass, jlon
   m3_GetResultsV(plugin->resolve, &outPtr);
   std::string out;
   if (outPtr) {
+    uint8_t* memory = nullptr;
     uint32_t size = 0;
-    uint8_t* memory = m3_GetMemory(plugin->runtime, &size, 0);
-    if (memory && outPtr < size) out.assign(reinterpret_cast<char*>(memory + outPtr));
+    if (guest_range(plugin->runtime, outPtr, 0, &memory, &size) && outPtr < size) {
+      const char* text = reinterpret_cast<char*>(memory + outPtr);
+      size_t max = size - outPtr;
+      size_t len = 0;
+      while (len < max && text[len] != 0) len++;
+      out.assign(text, len);
+    }
   }
   t_plugin = nullptr;
   return env->NewStringUTF(out.c_str());
