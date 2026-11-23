@@ -36,6 +36,8 @@ export interface ResolverOptions {
   lyricCacheTtlMs?: number
   picCacheTtlMs?: number
   maxAttempts?: number
+  /** 主源超过这个时间还没结果，就并发打下一路（默认 100ms，即「0.1 秒容灾」） */
+  hedgeMs?: number
   now?: () => number
 }
 
@@ -49,6 +51,7 @@ export class SourceResolver {
   private readonly registry: SourceRegistry
   private readonly hooks: ResolverHooks
   private readonly maxAttempts: number
+  private readonly hedgeMs: number
   private readonly urlCacheTtlMs: number
   private readonly urlCache: TtlCache<string, UrlResult>
   private readonly lyricCache: TtlCache<string, LyricResult>
@@ -62,6 +65,7 @@ export class SourceResolver {
     this.registry = options.registry
     this.hooks = options.hooks ?? {}
     this.maxAttempts = options.maxAttempts ?? DEFAULT_LIMITS.maxAttempts
+    this.hedgeMs = options.hedgeMs ?? 100
     const now = options.now
     this.urlCacheTtlMs = options.urlCacheTtlMs ?? 0
     this.urlCache = new TtlCache({ max: 200, ttlMs: this.urlCacheTtlMs, now })
@@ -77,6 +81,77 @@ export class SourceResolver {
    * 解析播放直链。降档顺序严格遵循规范阶梯；
    * 每次失败都记录在 attempts 里，UI 可以直接展示「为什么换源了」。
    */
+  /**
+   * 单个 Provider 的完整尝试：音质降档 → 单飞 → 缓存回填 → 错误策略。
+   * 抛错表示「这一路不行了」，交给 resolveUrl 决定补位还是收口。
+   */
+  private async attemptProvider(
+    provider: SourceProvider,
+    input: ResolveUrlInput,
+    cacheKey: string,
+    attempts: ResolveAttempt[],
+  ): Promise<UrlResult> {
+    const candidates = pickCandidates(input.quality, provider.meta.qualities)
+    let lastError: LxspError | null = null
+
+    for (const quality of candidates) {
+      if (attempts.length >= this.maxAttempts) break
+      const startedAt = Date.now()
+      const query: UrlQuery = {
+        source: input.source,
+        id: input.id,
+        name: input.name,
+        singer: input.singer,
+        album: input.album,
+        duration: input.duration,
+        quality,
+        fallback: input.fallback,
+      }
+      try {
+        const key = `url|${provider.meta.id}|${input.source}|${input.id}|${quality}`
+        const resolved = await this.urlFlight.run(key, () => provider.resolveUrl(query, { trace: undefined }))
+        // 降档事实必须在引擎层兜底复核：宁可多报一次降档，也不许静默降级
+        const value = input.quality && isDowngrade(input.quality, resolved.quality)
+          ? { ...resolved, downgraded: true }
+          : resolved
+        attempts.push({ providerId: provider.meta.id, source: input.source, quality, ok: true, elapsedMs: Date.now() - startedAt })
+        this.hooks.onAttempt?.(attempts[attempts.length - 1]!)
+        if (this.urlCacheTtlMs > 0) this.urlCache.set(cacheKey, value, this.urlCacheTtlMs)
+        this.registry.markHealthy(provider.meta.id)
+        return value
+      } catch (rawError) {
+        const error = toLxspError(rawError, 'internal')
+        lastError = error
+        const attempt: ResolveAttempt = {
+          providerId: provider.meta.id,
+          source: input.source,
+          quality,
+          ok: false,
+          code: error.code,
+          message: error.message,
+          elapsedMs: Date.now() - startedAt,
+        }
+        attempts.push(attempt)
+        this.hooks.onAttempt?.(attempt)
+
+        if (error.code === 'canceled' || error.code === 'bad_request') throw error
+        if (error.policy.markBad) {
+          this.registry.markUnhealthy(provider.meta.id, error.code)
+          this.hooks.markUnhealthy?.(provider.meta.id, error.code)
+        }
+        // nextProvider：传输层/鉴权/协议类错误，别在同一端点上继续降档烧时间
+        // !nextQuality：降档也没意义，直接换源
+        if (error.policy.nextProvider || !error.policy.nextQuality) throw lastError
+      }
+    }
+    throw lastError ?? new LxspError('not_found', `cannot resolve url for ${input.source}:${input.id}`, { source: input.source })
+  }
+
+  /**
+   * 解析播放直链，带「并发容灾」：
+   * 主源立即发；超过 hedgeMs（默认 100ms）还没结果就并发打备用源，谁先成功用谁。
+   * 主源「快速失败」时也不等间隔，立刻补位 —— 这正是「0.1 秒内切备用」的两条路径。
+   */
   async resolveUrl(input: ResolveUrlInput): Promise<ResolveUrlResult> {
     const providers = this.registry.providersFor(input.source, 'url')
     if (!providers.length) throw noProviderError(input.source, 'url')
@@ -84,76 +159,62 @@ export class SourceResolver {
     const attempts: ResolveAttempt[] = []
     const cacheKey = `${input.source}:${input.id}:${input.quality ?? 'auto'}`
     const cached = this.urlCache.get(cacheKey)
-    if (cached) {
-      const provider = providers[0]
-      return { value: cached, provider: provider.meta, attempts, source: input.source }
-    }
+    if (cached) return { value: cached, provider: providers[0]!.meta, attempts, source: input.source }
 
+    const hedgeMs = Math.max(0, this.hedgeMs)
+    let nextIndex = 0
+    let active = 0
+    let done = false
     let lastError: LxspError | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
 
-    for (const provider of providers) {
-      if (attempts.length >= this.maxAttempts) break
-      const candidates = pickCandidates(input.quality, provider.meta.qualities)
-      let providerFatal = false
-
-      for (const quality of candidates) {
-        if (attempts.length >= this.maxAttempts) break
-        const startedAt = Date.now()
-        const query: UrlQuery = {
-          source: input.source,
-          id: input.id,
-          name: input.name,
-          singer: input.singer,
-          album: input.album,
-          duration: input.duration,
-          quality,
-          fallback: input.fallback,
-        }
-        try {
-          const key = `url|${provider.meta.id}|${input.source}|${input.id}|${quality}`
-          const resolved = await this.urlFlight.run(key, () => provider.resolveUrl(query, { trace: undefined }))
-          // 降档事实必须在引擎层兜底复核：宁可多报一次降档，也不许静默降级
-          const value = input.quality && isDowngrade(input.quality, resolved.quality)
-            ? { ...resolved, downgraded: true }
-            : resolved
-          attempts.push({ providerId: provider.meta.id, source: input.source, quality, ok: true, elapsedMs: Date.now() - startedAt })
-          this.hooks.onAttempt?.(attempts[attempts.length - 1]!)
-          if (this.urlCacheTtlMs > 0) this.urlCache.set(cacheKey, value, this.urlCacheTtlMs)
-          this.registry.markHealthy(provider.meta.id)
-          this.hooks.rememberSource?.({ source: input.source, name: input.name ?? '', singer: input.singer ?? '' })
-          return { value, provider: provider.meta, attempts, source: input.source }
-        } catch (rawError) {
-          const error = toLxspError(rawError, 'internal')
-          lastError = error
-          const attempt: ResolveAttempt = {
-            providerId: provider.meta.id,
-            source: input.source,
-            quality,
-            ok: false,
-            code: error.code,
-            message: error.message,
-            elapsedMs: Date.now() - startedAt,
-          }
-          attempts.push(attempt)
-          this.hooks.onAttempt?.(attempt)
-
-          if (error.code === 'canceled' || error.code === 'bad_request') throw error
-          if (error.policy.markBad) {
-            this.registry.markUnhealthy(provider.meta.id, error.code)
-            this.hooks.markUnhealthy?.(provider.meta.id, error.code)
-          }
-          if (error.policy.nextProvider) {
-            // 传输层/鉴权/协议类错误：换镜像，别在同一端点上继续降档烧时间
-            providerFatal = true
-            break
-          }
-          if (!error.policy.nextQuality) break
-        }
+    return await new Promise<ResolveUrlResult>((resolve, reject) => {
+      const finish = (error?: LxspError | null, result?: ResolveUrlResult) => {
+        if (done) return
+        done = true
+        if (timer) clearTimeout(timer)
+        timer = null
+        if (result) resolve(result)
+        else reject(error ?? new LxspError('not_found', `cannot resolve url for ${input.source}:${input.id}`, { source: input.source }))
       }
-      if (providerFatal) continue
-    }
 
-    throw lastError ?? new LxspError('not_found', `cannot resolve url for ${input.source}:${input.id}`, { source: input.source })
+      const launch = (index: number) => {
+        if (done || index >= providers.length) return
+        const provider = providers[index]!
+        active += 1
+        void this.attemptProvider(provider, input, cacheKey, attempts).then((value) => {
+          active -= 1
+          if (done) return
+          this.hooks.rememberSource?.({ source: input.source, name: input.name ?? '', singer: input.singer ?? '' })
+          finish(null, { value, provider: provider.meta, attempts, source: input.source })
+        }, (error: LxspError) => {
+          active -= 1
+          lastError = error
+          if (done) return
+          if (error.code === 'canceled') return finish(error)
+          // 失败立刻补位，不等 hedge 间隔
+          if (nextIndex < providers.length) {
+            launch(nextIndex++)
+            return
+          }
+          if (active === 0) finish(lastError)
+        })
+      }
+
+      const schedule = () => {
+        if (done || nextIndex >= providers.length) return
+        timer = setTimeout(() => {
+          if (done) return
+          if (nextIndex < providers.length) {
+            launch(nextIndex++)
+            schedule()
+          }
+        }, hedgeMs)
+      }
+
+      launch(nextIndex++)
+      schedule()
+    })
   }
 
   async getLyric(query: TrackQuery): Promise<ResolveResult<LyricResult>> {
