@@ -26,9 +26,8 @@ add_library(yieyu_core SHARED
     ${WASM3_DIR}/m3_bind.c
     ${WASM3_DIR}/m3_code.c
     ${WASM3_DIR}/m3_compile.c
-    ${WASM3_DIR}/m3_validate.c
-    ${WASM3_DIR}/m3_xxh64.c
-    ${WASM3_DIR}/m3_snapshot.c)
+    ${WASM3_DIR}/m3_emit.c
+    ${WASM3_DIR}/m3_optimize.c)
 
 target_include_directories(yieyu_core PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -53,8 +52,7 @@ set_source_files_properties(${SQLITE_DIR}/sqlite3.c PROPERTIES COMPILE_OPTIONS "
 set_source_files_properties(
     ${WASM3_DIR}/m3_core.c ${WASM3_DIR}/m3_env.c ${WASM3_DIR}/m3_parse.c ${WASM3_DIR}/m3_exec.c
     ${WASM3_DIR}/m3_module.c ${WASM3_DIR}/m3_function.c ${WASM3_DIR}/m3_info.c ${WASM3_DIR}/m3_bind.c
-    ${WASM3_DIR}/m3_code.c ${WASM3_DIR}/m3_compile.c ${WASM3_DIR}/m3_validate.c ${WASM3_DIR}/m3_xxh64.c
-    ${WASM3_DIR}/m3_snapshot.c
+    ${WASM3_DIR}/m3_code.c ${WASM3_DIR}/m3_compile.c ${WASM3_DIR}/m3_emit.c ${WASM3_DIR}/m3_optimize.c
     PROPERTIES COMPILE_OPTIONS "-w")
 
 target_link_libraries(yieyu_core log)
