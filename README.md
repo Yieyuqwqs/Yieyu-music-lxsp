@@ -82,6 +82,37 @@
 
 ---
 
+## 四·五、WASM 插件（可选，进阶）
+
+App 里**内嵌了一个 WASM 运行时**（wasm3，原生层编译进去）。音源逻辑可以做成一个 .wasm 插件，
+跑在这个沙箱里 —— 只能发 HTTP，读不到文件、拿不到系统权限，比当年跑 JS 脚本安全得多。
+
+设置页「WASM 插件」那格填 JSON，两种写法：
+
+```json
+[{"name":"本机网关","source":"kw","builtin":"api-mode"}]
+```
+```json
+[{"name":"别人的源","source":"kg","url":"https://example.com/plugin.wasm"}]
+```
+
+- `builtin:"api-mode"` 是随包内置的参考插件（534 字节）：`GET {BASE}/url/{source}/{id}?quality={q}`，
+  从响应里取 `"data":"…"` 当直链；默认 BASE 是本机网关 `http://127.0.0.1:8080`。
+- 不想装编译器也能改：插件是纯字节，仓库里带生成器
+  `node tools/wasm/build-plugin.mjs http://你的网关:端口`。
+
+插件 ABI：
+
+```
+export memory
+export alloc(len:i32) -> ptr
+export resolve(srcPtr,srcLen,idPtr,idLen,qPtr,qLen) -> ptr    // 返回 NUL 结尾直链，0 = 失败
+import env.http(urlPtr,urlLen,bodyPtr,bodyLen) -> ptr          // bodyLen=0 表示 GET
+import env.log(ptr,len)
+```
+
+---
+
 ## 五、给自己人看的：支持哪几种后端
 
 客户端会**并行**判断你填的地址属于哪一类（探测最坏只等一个超时，不是串行等四次）：

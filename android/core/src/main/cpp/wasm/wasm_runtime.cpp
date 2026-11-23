@@ -6,7 +6,7 @@
 // 插件 ABI（很小，够用）：
 //   导出  memory
 //   导出  alloc(i32 size) -> i32                      // 返回值指针
-//   导出  resolve(i32 inPtr, i32 inLen) -> i32        // 返回 NUL 结尾 JSON 的指针
+//   导出  resolve(srcPtr,srcLen,idPtr,idLen,qPtr,qLen) -> i32   // 返回 NUL 结尾直链的指针
 //   导入  env.http(i32 urlPtr, i32 urlLen, i32 bodyPtr, i32 bodyLen) -> i32   // 返回 JSON 指针（0 = 失败）
 //   导入  env.log(i32 ptr, i32 len)
 //
@@ -176,20 +176,32 @@ Java_cn_toside_music_core_CoreModule_nativeWasmLoad(JNIEnv* env, jclass, jbyteAr
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_cn_toside_music_core_CoreModule_nativeWasmResolve(JNIEnv* env, jclass, jlong handle, jstring input) {
+Java_cn_toside_music_core_CoreModule_nativeWasmResolve(JNIEnv* env, jclass, jlong handle, jstring source, jstring musicId, jstring quality) {
   t_env = env;
   auto* plugin = reinterpret_cast<WasmPlugin*>(handle);
-  if (!plugin || !input) return env->NewStringUTF("");
+  if (!plugin || !source || !musicId || !quality) return env->NewStringUTF("");
   t_plugin = plugin;
 
-  const char* chars = env->GetStringUTFChars(input, nullptr);
-  std::string payload = chars ? chars : "";
-  if (chars) env->ReleaseStringUTFChars(input, chars);
+  // ABI v2：三个字段各自拷进 guest 内存，插件自己拼 URL，不用解析 JSON
+  const char* srcChars = env->GetStringUTFChars(source, nullptr);
+  const char* idChars = env->GetStringUTFChars(musicId, nullptr);
+  const char* qChars = env->GetStringUTFChars(quality, nullptr);
+  std::string src = srcChars ? srcChars : "";
+  std::string mid = idChars ? idChars : "";
+  std::string qual = qChars ? qChars : "";
+  if (srcChars) env->ReleaseStringUTFChars(source, srcChars);
+  if (idChars) env->ReleaseStringUTFChars(musicId, idChars);
+  if (qChars) env->ReleaseStringUTFChars(quality, qChars);
 
-  uint32_t inPtr = write_guest_string(plugin, payload);
-  if (!inPtr) { t_plugin = nullptr; return env->NewStringUTF(""); }
+  uint32_t srcPtr = write_guest_string(plugin, src);
+  uint32_t idPtr = write_guest_string(plugin, mid);
+  uint32_t qPtr = write_guest_string(plugin, qual);
+  if (!srcPtr || !idPtr || !qPtr) { t_plugin = nullptr; return env->NewStringUTF(""); }
 
-  M3Result result = m3_CallV(plugin->resolve, inPtr, (uint32_t) payload.size());
+  M3Result result = m3_CallV(plugin->resolve,
+                             srcPtr, (uint32_t) src.size(),
+                             idPtr, (uint32_t) mid.size(),
+                             qPtr, (uint32_t) qual.size());
   if (result) {
     WASM_LOGE("resolve trapped: %s", result);
     t_plugin = nullptr;

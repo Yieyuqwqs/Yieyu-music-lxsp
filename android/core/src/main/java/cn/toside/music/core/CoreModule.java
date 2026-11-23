@@ -228,13 +228,13 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
   }
 
   @ReactMethod
-  public void wasmResolve(double handle, String payload, Promise promise) {
+  public void wasmResolve(double handle, String source, String musicId, String quality, Promise promise) {
     if (!LOADED) {
       promise.reject("wasm", "native 未加载: " + loadError);
       return;
     }
     try {
-      promise.resolve(nativeWasmResolve((long) handle, payload == null ? "" : payload));
+      promise.resolve(nativeWasmResolve((long) handle, source == null ? "" : source, musicId == null ? "" : musicId, quality == null ? "" : quality));
     } catch (Throwable error) {
       promise.reject("wasm", error);
     }
@@ -252,7 +252,7 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
 
   private static native long nativeWasmLoad(byte[] bytes);
 
-  private static native String nativeWasmResolve(long handle, String payload);
+  private static native String nativeWasmResolve(long handle, String source, String musicId, String quality);
 
   private static native void nativeWasmFree(long handle);
 

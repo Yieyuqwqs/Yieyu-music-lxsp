@@ -3,7 +3,7 @@ import { NativeModules } from 'react-native'
 
 interface WasmRuntimeNative {
   wasmLoad: (base64: string) => Promise<number>
-  wasmResolve: (handle: number, payload: string) => Promise<string>
+  wasmResolve: (handle: number, source: string, musicId: string, quality: string) => Promise<string>
   wasmFree: (handle: number) => Promise<void>
 }
 
@@ -16,9 +16,9 @@ export const wasmLoad = (base64: string): Promise<number> => {
   return native.wasmLoad(base64)
 }
 
-export const wasmResolve = (handle: number, payload: string): Promise<string> => {
+export const wasmResolve = (handle: number, source: string, musicId: string, quality: string): Promise<string> => {
   if (!native?.wasmResolve) return Promise.reject(new Error('WASM 运行时不可用'))
-  return native.wasmResolve(handle, payload)
+  return native.wasmResolve(handle, source, musicId, quality)
 }
 
 export const wasmFree = (handle: number): Promise<void> => {

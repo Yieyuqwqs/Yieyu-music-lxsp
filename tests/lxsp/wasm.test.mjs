@@ -11,7 +11,10 @@ const fakeBridge = (reply) => {
     calls,
     bridge: {
       load: async() => { calls.load += 1; return 7 },
-      resolve: async(_handle, payload) => { calls.resolve.push(JSON.parse(payload)); return reply(payload) },
+      resolve: async(_handle, source, musicId, quality) => {
+        calls.resolve.push({ source, id: musicId, quality })
+        return reply({ source, id: musicId, quality })
+      },
       free: async() => { calls.free += 1 },
     },
   }
@@ -30,7 +33,7 @@ export default (t) => {
   })
 
   t.suite('插件取直链：入参协议正确，出参按真音质回填', async() => {
-    const { bridge, calls } = fakeBridge(() => JSON.stringify({ url: 'http://cdn/wasm.flac', quality: 'flac' }))
+    const { bridge, calls } = fakeBridge(() => 'http://cdn/wasm.flac')
     const provider = await WasmPluginProvider.create({
       config: { name: 'demo', source: 'kw', url: 'https://x/plugin.wasm' },
       bridge, priority: 0, fetchImpl: fetchWasm,
@@ -38,18 +41,18 @@ export default (t) => {
     t.ok(provider, '加载成功')
     t.eq(calls.load, 1, '只 load 一次')
     const result = await provider.resolveUrl({ source: 'kw', id: '42', quality: 'flac', name: '歌', singer: '人' })
-    t.eq(calls.resolve[0], { action: 'url', source: 'kw', id: '42', quality: 'flac', name: '歌', singer: '人' })
+    t.eq(calls.resolve[0], { source: 'kw', id: '42', quality: 'flac' })
     t.eq(result.url, 'http://cdn/wasm.flac')
     t.eq(result.quality, 'flac')
     t.eq(provider.supports('search'), false, '插件不假装有搜索')
   })
 
   t.suite('插件返回错误码：按统一错误码抛出（unauthorized 不被当成没版权）', async() => {
-    const { bridge } = fakeBridge(() => JSON.stringify({ error: '密钥验证失败', code: 'unauthorized' }))
+    const { bridge } = fakeBridge(() => '')
     const provider = await WasmPluginProvider.create({
       config: { source: 'kw', url: 'https://x/p.wasm' }, bridge, priority: 0, fetchImpl: fetchWasm,
     })
-    await t.rejects(() => provider.resolveUrl({ source: 'kw', id: '1', quality: '320k' }), 'unauthorized')
+    await t.rejects(() => provider.resolveUrl({ source: 'kw', id: '1', quality: '320k' }), 'upstream_error', '空返回就是 upstream_error')
   })
 
   t.suite('不是 wasm 的文件直接拒绝（不把 HTML 错误页当插件）', async() => {
@@ -62,7 +65,7 @@ export default (t) => {
   })
 
   t.suite('引擎注册：插件优先级高于端点，失败不影响其它音源', async() => {
-    const { bridge } = fakeBridge(() => JSON.stringify({ url: 'http://cdn/from-plugin.mp3', quality: '320k' }))
+    const { bridge } = fakeBridge(() => 'http://cdn/from-plugin.mp3')
     const engine = new SourceEngine()
     const result = await engine.init({
       endpoints: [],

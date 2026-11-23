@@ -15,13 +15,15 @@
  * 出参  {"url":"https://…","quality":"flac"} 或 {"error":"…","code":"unauthorized"}
  */
 import { LxspError } from './errors'
+import { BUILTIN_PLUGINS } from './wasm-builtin'
 import { normalizeQuality, sortQualitiesDesc } from './quality'
 import type { FetchLike } from './transport'
 import type { LyricResult, ProviderMeta, RequestContext, SearchResultData, SourceProvider, TrackQuery, UrlQuery, UrlResult } from './types'
 
 export interface WasmBridge {
   load: (base64: string) => Promise<number>
-  resolve: (handle: number, payload: string) => Promise<string>
+  /** ABI v2：直接给字段，插件自己拼 URL，不用解析 JSON */
+  resolve: (handle: number, source: string, musicId: string, quality: string) => Promise<string>
   free: (handle: number) => Promise<void>
 }
 
@@ -29,8 +31,10 @@ export interface WasmPluginConfig {
   id?: string
   name?: string
   source: LX.Source
-  /** 插件 .wasm 的下载地址（初始化时拉取） */
-  url: string
+  /** 插件 .wasm 的下载地址 */
+  url?: string
+  /** 或者用内置插件（离线可用），如 'api-mode' */
+  builtin?: string
   qualities?: string[]
 }
 
@@ -108,8 +112,16 @@ export class WasmPluginProvider implements SourceProvider {
     timeoutMs?: number
   }): Promise<WasmPluginProvider | null> {
     const timeoutMs = options.timeoutMs ?? 8000
+    if (!options.config.url && options.config.builtin) {
+      const builtin = BUILTIN_PLUGINS[options.config.builtin]
+      if (!builtin) throw new LxspError('bad_request', `没有内置插件：${options.config.builtin}`)
+      const handle = await options.bridge.load(builtin.base64)
+      if (!handle) throw new LxspError('bad_response', '内置插件加载失败')
+      return new WasmPluginProvider({ config: { ...options.config, url: `builtin:${options.config.builtin}`, name: options.config.name ?? builtin.name }, handle, bridge: options.bridge, priority: options.priority })
+    }
+    if (!options.config.url) throw new LxspError('bad_request', '插件既没有 url 也没有 builtin')
     const response = await Promise.race([
-      options.fetchImpl(options.config.url, { method: 'GET', headers: { Accept: 'application/wasm,*/*' } }),
+      options.fetchImpl(options.config.url!, { method: 'GET', headers: { Accept: 'application/wasm,*/*' } }),
       new Promise<never>((_resolve, reject) => setTimeout(() => reject(new LxspError('timeout', '插件下载超时')), timeoutMs)),
     ])
     const buffer = await readBytes(response)
@@ -129,24 +141,15 @@ export class WasmPluginProvider implements SourceProvider {
 
   async resolveUrl(query: UrlQuery, ctx: RequestContext = {}): Promise<UrlResult> {
     if (this.disposed) throw new LxspError('canceled', '插件已卸载')
-    const payload = JSON.stringify({
-      action: 'url',
-      source: query.source,
-      id: query.id,
-      quality: query.quality ?? '320k',
-      name: query.name ?? '',
-      singer: query.singer ?? '',
-    })
+    const quality = query.quality ?? '320k'
     const text = await Promise.race([
-      this.bridge.resolve(this.handle, payload),
+      this.bridge.resolve(this.handle, query.source, query.id, quality),
       new Promise<never>((_resolve, reject) => setTimeout(() => reject(new LxspError('timeout', '插件执行超时')), ctx.timeoutMs ?? 12000)),
     ])
-    const data = parsePayload(String(text))
-    if (!data) throw new LxspError('bad_response', '插件返回无法解析')
-    const url = typeof data.url === 'string' ? data.url : ''
-    if (!/^https?:\/\//i.test(url)) throw mapCode(data.code, String(data.error ?? data.message ?? '插件没有返回直链'))
+    const url = String(text || '').trim()
+    if (!/^https?:\/\//i.test(url)) throw new LxspError('upstream_error', '插件没有返回直链')
     const requested = query.quality ?? 'auto'
-    const actual = normalizeQuality(data.quality) ?? (query.quality ?? '128k')
+    const actual = query.quality ?? '128k'
     return {
       url,
       quality: actual,
