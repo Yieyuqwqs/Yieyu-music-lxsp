@@ -79,6 +79,7 @@ const mapCode = (code: unknown, message: string): LxspError => {
 
 export class WasmPluginProvider implements SourceProvider {
   readonly meta: ProviderMeta
+  private disposed = false
   private readonly handle: number
   private readonly bridge: WasmBridge
 
@@ -127,6 +128,7 @@ export class WasmPluginProvider implements SourceProvider {
   }
 
   async resolveUrl(query: UrlQuery, ctx: RequestContext = {}): Promise<UrlResult> {
+    if (this.disposed) throw new LxspError('canceled', '插件已卸载')
     const payload = JSON.stringify({
       action: 'url',
       source: query.source,
@@ -168,8 +170,30 @@ export class WasmPluginProvider implements SourceProvider {
   }
 
   async dispose(): Promise<void> {
+    if (this.disposed) return
+    this.disposed = true
     await this.bridge.free(this.handle).catch(() => {})
   }
+}
+
+/** 纯 JS UTF-8 编码：Hermes 没有 TextEncoder，不能直接用它 */
+const utf8Encode = (text: string): Uint8Array => {
+  const out: number[] = []
+  for (let i = 0; i < text.length; i++) {
+    let code = text.charCodeAt(i)
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+      const next = text.charCodeAt(i + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        code = ((code - 0xd800) << 10) + (next - 0xdc00) + 0x10000
+        i += 1
+      }
+    }
+    if (code < 0x80) out.push(code)
+    else if (code < 0x800) out.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f))
+    else if (code < 0x10000) out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+    else out.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+  }
+  return new Uint8Array(out)
 }
 
 const readBytes = async(response: { arrayBuffer?: () => Promise<ArrayBuffer>, text?: () => Promise<string>, status?: number }): Promise<Uint8Array | null> => {
@@ -179,9 +203,9 @@ const readBytes = async(response: { arrayBuffer?: () => Promise<ArrayBuffer>, te
   }
   if (typeof response.text === 'function') {
     const text = await response.text()
-    return new TextEncoder().encode(text)
+    return utf8Encode(text)
   }
   return null
 }
 
-export { readBytes }
+export { readBytes, utf8Encode }
