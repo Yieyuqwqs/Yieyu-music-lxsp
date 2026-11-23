@@ -12,6 +12,15 @@ import com.facebook.react.bridge.ReactMethod;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+import org.json.JSONObject;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 /**
  * Yieyu Core 的 RN 门面（M0 地基）。
@@ -191,4 +200,99 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
   private native void nativeSetForeground(boolean foreground);
   private native void nativeStop();
   private native String nativeStats();
+  // ------------------------------------------------ WASM 音源插件（沙箱）
+  //
+  // 插件跑在 wasm3 解释器里（原生，Hermes 没有 WebAssembly）。
+  // 它能做的事只有两件：调 env.http 发同步 HTTP、调 env.log 打日志；
+  // 文件、进程、其他系统能力一律拿不到 —— 这是相对当年 QuickJS 脚本的实质改进。
+
+  private static final OkHttpClient WASM_CLIENT = new OkHttpClient.Builder()
+      .connectTimeout(8, TimeUnit.SECONDS)
+      .readTimeout(20, TimeUnit.SECONDS)
+      .build();
+
+  @ReactMethod
+  public void wasmLoad(String base64, Promise promise) {
+    if (!LOADED) {
+      promise.reject("wasm", "native 未加载: " + loadError);
+      return;
+    }
+    try {
+      byte[] bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT);
+      long handle = nativeWasmLoad(bytes);
+      if (handle == 0) promise.reject("wasm", "插件加载失败：不是合法 wasm，或缺少 alloc/resolve 导出");
+      else promise.resolve((double) handle);
+    } catch (Throwable error) {
+      promise.reject("wasm", error);
+    }
+  }
+
+  @ReactMethod
+  public void wasmResolve(double handle, String payload, Promise promise) {
+    if (!LOADED) {
+      promise.reject("wasm", "native 未加载: " + loadError);
+      return;
+    }
+    try {
+      promise.resolve(nativeWasmResolve((long) handle, payload == null ? "" : payload));
+    } catch (Throwable error) {
+      promise.reject("wasm", error);
+    }
+  }
+
+  @ReactMethod
+  public void wasmFree(double handle, Promise promise) {
+    try {
+      nativeWasmFree((long) handle);
+    } catch (Throwable ignored) {
+      // 释放失败不影响业务
+    }
+    promise.resolve(null);
+  }
+
+  private static native long nativeWasmLoad(byte[] bytes);
+
+  private static native String nativeWasmResolve(long handle, String payload);
+
+  private static native void nativeWasmFree(long handle);
+
+  /**
+   * 插件唯一的外网出口（C++ 侧通过 JNI 同步调用）。
+   * 入参 requestJson: {"method":"POST","headers":{...},"body":"..."}
+   * 出参: {"status":200,"body":"..."}；失败 status=0。
+   */
+  public static String wasmHttp(String url, String requestJson) {
+    try {
+      JSONObject spec = new JSONObject(requestJson == null || requestJson.isEmpty() ? "{}" : requestJson);
+      String method = spec.optString("method", "GET").toUpperCase();
+      String body = spec.optString("body", "");
+      Request.Builder builder = new Request.Builder().url(url).header("User-Agent", "YieyuMusic-Plugin");
+      JSONObject headers = spec.optJSONObject("headers");
+      if (headers != null) {
+        java.util.Iterator<String> keys = headers.keys();
+        while (keys.hasNext()) {
+          String key = keys.next();
+          builder.header(key, String.valueOf(headers.opt(key)));
+        }
+      }
+      if ("POST".equals(method)) {
+        RequestBody requestBody = RequestBody.create(body, MediaType.parse("application/json"));
+        builder.post(requestBody);
+      }
+      Response response = WASM_CLIENT.newCall(builder.build()).execute();
+      String text;
+      try {
+        text = response.body() == null ? "" : response.body().string();
+      } finally {
+        response.close();
+      }
+      JSONObject out = new JSONObject();
+      out.put("status", response.code());
+      out.put("body", text);
+      return out.toString();
+    } catch (Throwable error) {
+      Log.w(TAG, "wasm http failed: " + error.getClass().getSimpleName(), error);
+      return "{\"status\":0,\"body\":\"\"}";
+    }
+  }
 }

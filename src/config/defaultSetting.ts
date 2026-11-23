@@ -6,6 +6,7 @@ const defaultSetting: LX.AppSetting = {
   'common.lxspEndpoints': 'http://127.0.0.1:1101',
   // 本机网关默认 key（与 lx-server/config.json 的 auth.keys 对应）；换服务端 key 时这里同步改
   'common.lxspToken': 'Cyb-P2077-n30h4ck3r-0X',
+  'common.wasmPlugins': '',
   'common.sourceNameType': 'alias',
   'common.shareType': 'system',
   'common.isAgreePact': false,

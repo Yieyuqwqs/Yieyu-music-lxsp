@@ -12,6 +12,7 @@ import { detectEndpoint, type Detection } from './detect'
 import { RemoteProvider } from './remote'
 import { parseManifest } from './manifest'
 import { ApiProfileProvider } from './api-profiles'
+import { WasmPluginProvider, type WasmBridge, type WasmPluginConfig } from './wasm-plugin'
 import { toLegacyQuery, toLegacyMusicItem } from './local'
 import { LxspError, toLxspError } from './errors'
 import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
@@ -33,6 +34,10 @@ export interface EngineInitOptions {
   token?: string | null
   fetchImpl?: FetchLike
   timeoutMs?: number
+  /** WASM 音源插件（跑在原生 wasm3 里） */
+  wasmPlugins?: WasmPluginConfig[]
+  /** 原生 wasm 运行时桥（App 侧注入；测试可注入假实现） */
+  wasmBridge?: WasmBridge
   /** 成功播放后记住音源 */
   rememberSource?: (info: { source: LX.Source, name: string, singer: string }) => void
   onLog?: (level: 'info' | 'warn' | 'error', message: string) => void
@@ -171,6 +176,27 @@ export class SourceEngine {
           latencyMs: Date.now() - startedAt,
         })
         log('info', `api profile ready: ${baseUrl} (${probe.profile}, ${probe.sources.length} sources)`)
+      }
+    }
+
+    // WASM 插件：优先级最高（用户自己装的插件，排在所有端点前面）
+    if (options.wasmPlugins?.length) {
+      const bridge = options.wasmBridge
+      const pluginFetch = options.fetchImpl ?? resolveFetch()
+      if (bridge && pluginFetch) {
+        for (const [index, config] of options.wasmPlugins.entries()) {
+          try {
+            const provider = await WasmPluginProvider.create({ config, bridge, priority: index, fetchImpl: pluginFetch })
+            if (provider) {
+              registry.add(provider)
+              log('info', `wasm plugin ready: ${config.name ?? config.url} -> ${config.source}`)
+            }
+          } catch (error) {
+            log('warn', `wasm plugin failed: ${config.url} -> ${(error as Error).message}`)
+          }
+        }
+      } else {
+        log('warn', 'wasm 插件已配置，但原生运行时不可用（用 API_URL 模式即可）')
       }
     }
 

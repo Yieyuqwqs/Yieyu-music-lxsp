@@ -56,9 +56,12 @@ export default memo(() => {
   const savedToken = useSettingValue('common.lxspToken')
   const [rows, setRows] = useState<EndpointRow[]>(() => toRows(savedEndpoints, savedToken))
   const [status, setStatus] = useState<SourceEngineStatus>(() => getEngineStatus())
+  const savedPlugins = useSettingValue('common.wasmPlugins')
+  const [pluginsDraft, setPluginsDraft] = useState(savedPlugins)
   const [probing, setProbing] = useState(false)
 
   useEffect(() => { setRows(toRows(savedEndpoints, savedToken)) }, [savedEndpoints, savedToken])
+  useEffect(() => { setPluginsDraft(savedPlugins) }, [savedPlugins])
 
   const refresh = useCallback(() => { setStatus(getEngineStatus()) }, [])
 
@@ -76,10 +79,11 @@ export default memo(() => {
       'common.lxspEndpoints': fromRows(rows),
       // 全局密钥留主地址的，备用地址没填 key 时兜底用它
       'common.lxspToken': rows[0]?.key.trim() ?? '',
+      'common.wasmPlugins': pluginsDraft.trim(),
     })
     setApiSource('lxsp')
     setTimeout(refresh, refreshDelay)
-  }, [rows, refresh])
+  }, [rows, pluginsDraft, refresh])
 
   const handleProbe = useCallback(() => {
     setProbing(true)
@@ -129,6 +133,23 @@ export default memo(() => {
           </View>
         ))
       }
+
+      <View style={styles.group}>
+        <Text size={13} color={theme['c-font-label']}>WASM 插件（JSON，可留空）</Text>
+        <TextInput
+          style={{ ...styles.input, height: 76, textAlignVertical: 'top', color: theme['c-font'], borderColor: theme['c-350'] }}
+          value={pluginsDraft}
+          onChangeText={setPluginsDraft}
+          placeholder={'[{"name":"我的源","source":"kw","url":"https://example.com/plugin.wasm"}]'}
+          placeholderTextColor={theme['c-450']}
+          multiline
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        <Text size={12} color={theme['c-500']} style={styles.hint}>
+          {'插件跑在 App 自带的 wasm3 沙箱里：只能发 HTTP，读不到文件、拿不到系统权限'}
+        </Text>
+      </View>
 
       <View style={styles.btn}>
         <Button onPress={handleSave}>保存并重连</Button>

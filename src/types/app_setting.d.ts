@@ -32,6 +32,12 @@ declare global {
        */
       'common.lxspToken': string
 
+      /**
+       * WASM 音源插件（JSON 数组）：[{"name":"…","source":"kw","url":"https://…/plugin.wasm"}]
+       * 插件跑在 App 内嵌的 wasm3 沙箱里，只能发 HTTP，没有文件/系统权限
+       */
+      'common.wasmPlugins': string
+
 
 
       /**

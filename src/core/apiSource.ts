@@ -10,9 +10,11 @@ import settingState from '@/store/setting/state'
 import { log as writeLog } from '@/utils/log'
 import { updateSetting } from './common'
 import { rememberSource } from './sourceMemory'
+import { isWasmRuntimeAvailable, wasmFree, wasmLoad, wasmResolve } from '@/utils/nativeModules/wasmrt'
 import {
   sourceEngine,
   parseEndpoints,
+  type WasmPluginConfig,
   type EngineInitResult,
   type EndpointStatus,
 } from './source'
@@ -47,9 +49,23 @@ export const initSourceEngine = async(): Promise<EngineInitResult> => {
   const setting = settingState.setting
   const endpoints = parseEndpoints(setting['common.lxspEndpoints'], setting['common.lxspToken'])
 
+  let wasmPlugins: WasmPluginConfig[] = []
+  try {
+    const raw = setting['common.wasmPlugins']
+    if (raw && raw.trim()) {
+      const parsed = JSON.parse(raw)
+      wasmPlugins = (Array.isArray(parsed) ? parsed : [parsed])
+        .filter((item): item is WasmPluginConfig => !!item && typeof item.url === 'string' && typeof item.source === 'string')
+    }
+  } catch (error) {
+    writeLog.warn(`WASM 插件配置不是合法 JSON：${(error as Error).message}`)
+  }
+
   const result = await sourceEngine.init({
     endpoints,
     token: setting['common.lxspToken'] || null,
+    wasmPlugins: isWasmRuntimeAvailable() ? wasmPlugins : [],
+    wasmBridge: isWasmRuntimeAvailable() ? { load: wasmLoad, resolve: wasmResolve, free: wasmFree } : undefined,
     rememberSource: ({ source, name, singer }) => {
       if (!name) return
       rememberSource({ name, singer, source })
