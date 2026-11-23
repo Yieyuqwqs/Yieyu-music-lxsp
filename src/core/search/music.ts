@@ -23,16 +23,23 @@ export const clearListInfo: typeof searchMusicActions.clearListInfo = (source) =
  * 引擎不在就退回内置实现。返回的仍是旧 SearchResult 形状。
  */
 const searchBySource = (source: LX.Source, text: string, page: number, limit: number): Promise<SearchResult> => {
-  if (sourceEngine.isInited) {
+  // 只有「端点真的提供搜索」时才走引擎；API 模式 / 插件只给直链，没有搜索能力，
+  // 这种情况必须回落到内置实现，否则界面会变成一片「到底啦」。
+  if (sourceEngine.isInited && sourceEngine.hasSearchProvider(source)) {
     return sourceEngine.search(source, text, page, limit)
       .then(result => result as unknown as SearchResult)
       .catch((error) => {
-        throw error
+        console.warn(`[search] 端点搜索失败，回落内置：${source} ${(error as Error).message}`)
+        return fallbackSearch(source, text, page, limit)
       })
   }
-  return (musicSdk[source]?.musicSearch.search(text, page, limit) as Promise<SearchResult>) ??
-    Promise.reject(new Error('source not found: ' + source))
+  return fallbackSearch(source, text, page, limit)
 }
+
+const fallbackSearch = (source: LX.Source, text: string, page: number, limit: number): Promise<SearchResult> => (
+  (musicSdk[source]?.musicSearch?.search(text, page, limit) as Promise<SearchResult>) ??
+  Promise.reject(new Error('source not found: ' + source))
+)
 
 export const search = async(text: string, page: number, sourceId: Source): Promise<LX.Music.MusicInfoOnline[]> => {
   const listInfo = searchMusicState.listInfos[sourceId]!
