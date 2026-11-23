@@ -21,7 +21,6 @@
 
 #include "wasm3.h"
 #include "m3_env.h"
-#include "m3_api_defs.h"
 
 #define WASM_TAG "YieyuWasm"
 #define WASM_LOGE(...) __android_log_print(ANDROID_LOG_ERROR, WASM_TAG, __VA_ARGS__)
@@ -97,41 +96,46 @@ uint32_t write_guest_string(WasmPlugin* plugin, const std::string& text) {
   return ptr;
 }
 
-const void* host_http(IM3Runtime runtime, IM3ImportContext ctx, uint64_t* sp, void* mem) {
+static m3ApiRawFunction(host_http) {
+  // 结果槽先占掉（wasm3 的约定：第一个 _sp 槽是返回值）
+  m3ApiReturnType(uint32_t)
+  m3ApiGetArg(uint32_t, urlPtr)
+  m3ApiGetArg(uint32_t, urlLen)
+  m3ApiGetArg(uint32_t, bodyPtr)
+  m3ApiGetArg(uint32_t, bodyLen)
+
   auto* plugin = t_plugin;
-  if (!plugin || !mem) return nullptr;
-  uint32_t urlPtr = (uint32_t) sp[0];
-  uint32_t urlLen = (uint32_t) sp[1];
-  uint32_t bodyPtr = (uint32_t) sp[2];
-  uint32_t bodyLen = (uint32_t) sp[3];
+  if (!plugin) m3ApiReturn(0u)
+
   uint8_t* base = nullptr;
   uint32_t size = 0;
-  if (!guest_range(runtime, urlPtr, urlLen, &base, &size)) m3ApiReturnValue(0u);
-  if (urlLen > 2048) m3ApiReturnValue(0u);
-  if (bodyLen && !guest_range(runtime, bodyPtr, bodyLen, &base, &size)) m3ApiReturnValue(0u);
-  if (bodyLen > 64 * 1024) m3ApiReturnValue(0u);
+  if (!guest_range(runtime, urlPtr, urlLen, &base, &size)) m3ApiReturn(0u)
+  if (urlLen == 0 || urlLen > 2048) m3ApiReturn(0u)
+  if (bodyLen && !guest_range(runtime, bodyPtr, bodyLen, &base, &size)) m3ApiReturn(0u)
+  if (bodyLen > 64 * 1024) m3ApiReturn(0u)
+
   std::string url(reinterpret_cast<char*>(base + urlPtr), urlLen);
   std::string body = bodyLen ? std::string(reinterpret_cast<char*>(base + bodyPtr), bodyLen) : std::string();
   std::string response = call_java_http(url, body);
-  uint32_t outPtr = write_guest_string(plugin, response.empty() ? "{\"status\":0}" : response);
-  m3ApiReturnValue(outPtr);
+  if (response.empty()) response = "{\"status\":0,\"body\":\"\"}";
+  uint32_t outPtr = write_guest_string(plugin, response);
+  m3ApiReturn(outPtr)
 }
 
-const void* host_log(IM3Runtime runtime, IM3ImportContext ctx, uint64_t* sp, void* mem) {
-  if (!mem) return nullptr;
-  uint32_t ptr = (uint32_t) sp[0];
-  uint32_t len = (uint32_t) sp[1];
-  (void) mem;
+static m3ApiRawFunction(host_log) {
+  m3ApiGetArg(uint32_t, ptr)
+  m3ApiGetArg(uint32_t, len)
   uint8_t* base = nullptr;
   uint32_t size = 0;
-  if (!guest_range(runtime, ptr, len, &base, &size)) return nullptr;
+  if (!guest_range(runtime, ptr, len, &base, &size)) m3ApiSuccess()
   if (len > 4096) len = 4096;
   std::string text(reinterpret_cast<char*>(base + ptr), len);
   WASM_LOGI("plugin: %s", text.c_str());
-  return nullptr;
+  m3ApiSuccess()
 }
 
 }  // namespace
+
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
   g_vm = vm;
