@@ -247,6 +247,11 @@ export class SourceEngine {
     return this.registry.has(source, 'url')
   }
 
+  /** 这个源有没有能搜索的 Provider（没有就该回落到内置实现，而不是给个空列表） */
+  hasSearchProvider(source: LX.Source): boolean {
+    return this.registry.has(source, 'search')
+  }
+
   /**
    * 旧调用面兼容层：整个 App 里对「音源」的调用最终都落到这三个方法上，
    * 它们现在全部走统一的 resolver，不再有「脚本 / 内置」两套逻辑。
