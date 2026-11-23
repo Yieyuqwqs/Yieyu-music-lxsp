@@ -107,6 +107,26 @@ export default (t) => {
     server.close()
   })
 
+  t.suite('搜索能力探测：API 模式没有搜索，LXSP 声明了才有（决定要不要回落内置）', async() => {
+    const wwwwebServer = await start(wwwweb)
+    const engineA = new SourceEngine()
+    await engineA.init({ endpoints: [{ baseUrl: `http://127.0.0.1:${wwwwebServer.port}`, token: 'KEY' }] })
+    t.eq(engineA.hasSearchProvider('kg'), false, 'API 模式不假装能搜')
+    t.eq(engineA.hasUrlProvider('kg'), true, '但能取直链')
+    wwwwebServer.server.close()
+
+    const lxspServer = await start(({ url, send }) => {
+      if (url.pathname === '/manifest') {
+        return send(200, { ok: true, data: { lxsp: '2.0', provider: { id: 'p', name: 'P', version: '1' }, capabilities: ['url', 'search'], sources: [{ key: 'kw', name: 'K', qualities: ['320k'] }] } })
+      }
+      return send(404, {})
+    })
+    const engineB = new SourceEngine()
+    await engineB.init({ endpoints: [{ baseUrl: `http://127.0.0.1:${lxspServer.port}` }] })
+    t.eq(engineB.hasSearchProvider('kw'), true, 'LXSP 声明了搜索就能搜')
+    lxspServer.server.close()
+  })
+
   t.suite('引擎：LXSP v2 优先，不会被旧接口层抢走', async() => {
     const { server, port } = await start(({ url, send }) => {
       if (url.pathname === '/manifest') {
