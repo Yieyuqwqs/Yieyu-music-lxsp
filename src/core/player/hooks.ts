@@ -9,6 +9,8 @@ export interface PlayerHooks {
   /** 毫秒 */
   onSeek?: (positionMs: number) => void
   onTrackChange?: (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem | null) => void
+  /** 直链已解析并交给播放器（此时分享给房间才有意义） */
+  onResourceReady?: (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem | null) => void
 }
 
 let hooks: PlayerHooks = {}
@@ -29,4 +31,7 @@ export const callOnSeek = (positionMs: number): void => {
 }
 export const callOnTrackChange = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem | null): void => {
   if (hooks.onTrackChange) { try { hooks.onTrackChange(musicInfo) } catch (error) { /* 忽略 */ } }
+}
+export const callOnResourceReady = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem | null): void => {
+  if (hooks.onResourceReady) { try { hooks.onResourceReady(musicInfo) } catch (error) { /* 忽略 */ } }
 }
