@@ -44,6 +44,8 @@ export class P2PRoom {
   private lastStateAt = 0
   private clockSync: ClockSync = emptyClockSync()
   private lastPingAt = 0
+  /** 实测往返时延（来自 np_pong），用来算自适应提前量 */
+  private rttMs = 0
   /** 最近一次别人分享的直链，本机解析失败时可直接用 */
   private lastSharedUrl: { key: string, url: string } | null = null
   private closed = false
@@ -160,13 +162,13 @@ export class P2PRoom {
     switch (type) {
       case 'PLAY':
         if (!playback.trackStableKey) return false
-        this.state.playback = anchorForPlay(playback, serverNow)
+        this.state.playback = anchorForPlay(playback, serverNow, this.adaptiveLeadMs())
         break
       case 'PAUSE':
         this.state.playback = anchorForPause(playback, serverNow)
         break
       case 'SEEK':
-        this.state.playback = anchorForSeek(playback, serverNow, Number(payload.positionMs) || 0)
+        this.state.playback = anchorForSeek(playback, serverNow, Number(payload.positionMs) || 0, this.adaptiveLeadMs())
         break
       case 'SET_TRACK': {
         const track = payload.track
@@ -174,7 +176,7 @@ export class P2PRoom {
         const index = this.state.queue.findIndex(item => item.stableKey === track.stableKey)
         if (index >= 0) this.state.currentIndex = index
         else { this.state.queue = [...this.state.queue, track]; this.state.currentIndex = this.state.queue.length - 1 }
-        this.state.playback = anchorForSetTrack(playback, serverNow, track.stableKey)
+        this.state.playback = anchorForSetTrack(playback, serverNow, track.stableKey, this.adaptiveLeadMs())
         break
       }
       case 'SET_QUEUE': {
@@ -376,6 +378,12 @@ export class P2PRoom {
       return
     }
 
+    if (message.type === 'np_ping' && this.role === 'host') {
+      // 房主收到 ping：把对方往返时间记下来（近似 RTT）
+      const clientNow = Number(message.clientNow)
+      this.rttMs = Math.max(0, Math.min(3000, Date.now() - clientNow))
+    }
+
     if (message.type === 'np_pong' && this.role === 'guest') {
       const clientNow = Number(message.clientNow)
       const serverNow = Number(message.serverNow)
@@ -399,6 +407,17 @@ export class P2PRoom {
       if (message.memberId && message.memberId !== this.memberId) return
       this.options.onRejected?.(String(message.requestType), String(message.reason))
     }
+  }
+
+  /**
+   * 自适应提前量：提前量必须大于「消息到对方所需时间」，否则对方永远慢半拍。
+   * 用实测 RTT 推单程（RTT/2），再留 1.5 倍余量 + 80ms 抖动缓冲。
+   * 这个值只影响「什么时候开始」，不影响「对齐精度」——对齐永远精确到锚点。
+   */
+  private adaptiveLeadMs(): number {
+    const oneWay = this.rttMs > 0 ? this.rttMs / 2 : 120
+    const lead = Math.round(oneWay * 1.5 + 80)
+    return Math.max(200, Math.min(1500, lead))
   }
 
   /** 房主维护成员表：新面孔加进来，久没动静的标离线 */
