@@ -9,6 +9,7 @@ const defaultSetting: LX.AppSetting = {
   'common.wasmPlugins': '',
   'common.listenTogetherServer': 'p2p',
   'common.listenTogetherRoom': '',
+  'common.listenTogetherPrebuffer': true,
   'common.sourceNameType': 'alias',
   'common.shareType': 'system',
   'common.isAgreePact': false,
