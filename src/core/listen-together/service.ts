@@ -256,12 +256,17 @@ class ListenTogetherService {
             : null,
         })
         this.ensureQueueUrls()
-        if (role === 'guest') {
-          const next = state.queue[state.currentIndex + 1]
-          void this.preloadNextTrack(next)
+        // 角色差异用查表派发，不写条件分支
+        const roleHandlers = {
+          host: () => {},
+          guest: () => {
+            void this.preloadNextTrack(state.queue[state.currentIndex + 1])
+            // 唯一一条对齐路径：RoomSession.applyState（内部 version 守卫）
+            this.session?.applyState(state)
+          },
         }
-        // 成员：唯一一条对齐路径 —— RoomSession.applyState（内部 version 守卫）
-        if (role === 'guest') this.session?.applyState(state)
+        roleHandlers[role]()
+
       },
       onTransportChange: (info) => this.update({ transport: info.transport }),
       onRejected: (requestType, reason) => this.update({ lastError: `请求被拒（${requestType}）：${reason}` }),
