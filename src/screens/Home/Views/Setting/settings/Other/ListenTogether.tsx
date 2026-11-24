@@ -102,8 +102,8 @@ const PanelContent = memo(() => {
   return (
     <SubTitle title="一起听">
       <View style={styles.group}>
-        <Text size={13}>{`状态：${status.connected ? '已连接' : '未连接'}${status.direct?.up ? '（直连 UDP）' : '（MQTT 中转）'}${status.roomId ? `　房间：${status.roomId}` : ''}${status.role ? `　身份：${isController ? '控制端' : '成员'}` : ''}`}</Text>
-        <Text size={12} color={theme['c-500']} style={styles.hint}>{`C++ 引擎：${status.engine?.sync && status.engine?.direct ? '已接入（直连 + 同步）' : status.engine?.sync ? '同步已接入（直连未生效）' : status.engine?.direct ? '直连已接入（同步走 JS）' : '未接入这个包（全部走 JS 回退）'}`}</Text>
+        <Text size={13}>{`通道：${status.transport === 'direct' ? '直连 UDP' : status.transport === 'relay' ? 'MQTT 中转' : '正在打洞…'}${status.connected ? '' : '（未连接）'}　房间：${status.roomId ?? '-'}　身份：${status.role ? (isController ? '控制端' : '成员') : '-'}`}</Text>
+        <Text size={12} color={theme['c-500']} style={styles.hint}>{`原生能力：${status.engine?.sync && status.engine?.direct ? 'C++ 直连 + C++ 同步' : status.engine?.sync ? '仅 C++ 同步' : status.engine?.direct ? '仅 C++ 直连' : '无（全走 JS）'}　身份：${isController ? '控制端' : '成员'}`}</Text>
         {status.lastEvent ? <Text size={12} color={theme['c-500']} style={styles.hint}>{status.lastEvent}</Text> : null}
         {status.lastError ? <Text size={12} color={theme['c-500']} style={styles.hint}>{status.lastError}</Text> : null}
       </View>
