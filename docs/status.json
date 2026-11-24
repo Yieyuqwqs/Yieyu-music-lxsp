@@ -27,14 +27,6 @@
       ]
     },
     {
-      "id": "device-duration-observed",
-      "claim": "真机上 ExoPlayer 报出 duration>0",
-      "source": "未接上",
-      "evidence": [
-        "node tools/read-autocheck.mjs（需 App 运行后产生 /sdcard/lxsp-autocheck.json）"
-      ]
-    },
-    {
       "id": "ts-loader-dual-path",
       "claim": "测试加载器支持 Node≥22.6 内置剥离与 @babel/core 双路径，无正则改 TS",
       "source": "实测",
