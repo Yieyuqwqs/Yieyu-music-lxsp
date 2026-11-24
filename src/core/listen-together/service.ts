@@ -9,6 +9,7 @@ import settingState from '@/store/setting/state'
 import { play, pause } from '@/core/player/player'
 import { setCurrentTime } from '@/plugins/player/utils'
 import { ListenTogetherClient } from './client'
+import { P2PRoom, makeRoomId } from './p2p-room'
 import { setPlayerHooks } from '@/core/player/hooks'
 import { getList } from '@/core/player/playInfo'
 import { playListById, setMusicUrl } from '@/core/player/player'
@@ -79,9 +80,25 @@ class ListenTogetherService {
     }
   }
 
+  /** p2p: 前缀（或留空）表示免部署模式：用公共 MQTT broker，房主就是权威端 */
+  private readonly P2P_PREFIX = 'p2p'
+  private isP2PMode(): boolean {
+    const raw = String(settingState.setting['common.listenTogetherServer'] ?? '').trim()
+    return raw === '' || raw === this.P2P_PREFIX || raw.startsWith(this.P2P_PREFIX + ':') || raw.startsWith('mqtt')
+  }
+
+  private brokerUrl(): string | undefined {
+    const raw = String(settingState.setting['common.listenTogetherServer'] ?? '').trim()
+    const idx = raw.indexOf('wss://')
+    if (idx >= 0) return raw.slice(idx)
+    const wsIdx = raw.indexOf('ws://')
+    if (wsIdx >= 0) return raw.slice(wsIdx)
+    return undefined
+  }
+
   private serverUrl(): string {
     const raw = String(settingState.setting['common.listenTogetherServer'] ?? '').trim()
-    if (!raw) throw new Error('先在设置里填一起听服务器地址')
+    if (!raw) throw new Error('先在设置里填一起听服务器地址（免部署就填 p2p:）')
     return raw
   }
 
@@ -131,8 +148,66 @@ class ListenTogetherService {
     return client
   }
 
+  /** 免部署模式：房主自己就是服务端 */
+  private p2p: P2PRoom | null = null
+
+  private startP2P(roomId: string, role: 'host' | 'guest'): void {
+    this.p2p?.close()
+    const room = new P2PRoom({
+      roomId,
+      role,
+      brokerUrl: this.brokerUrl(),
+      onConnected: () => this.update({ connected: true, lastError: null, roomId }),
+      onDisconnected: () => this.update({ connected: false }),
+      onState: (state, serverNow) => {
+        this.update({
+          state,
+          roomId: state.roomId,
+          role: state.members.find(m => m.memberId === room.memberId)?.role ?? (role === 'host' ? 'CONTROLLER' : 'LISTENER'),
+          memberId: room.memberId,
+          members: state.members.map(m => ({ memberId: m.memberId, role: m.role, online: m.online })),
+          isPlaying: state.playback.isPlaying,
+          positionMs: room.playheadMs(),
+        })
+        // 成员收到状态 → 对齐本地播放
+        if (role === 'guest' && this.session) this.session.applyState(state)
+      },
+      onRejected: (requestType, reason) => this.update({ lastError: `请求被拒（${requestType}）：${reason}` }),
+      onError: (message) => this.update({ lastError: message }),
+    })
+    this.p2p = room
+    // 用适配器把 P2P 房间接进 RoomSession（成员侧靠它对齐播放器）
+    const adapter = {
+      on: () => () => {},
+      get isController() { return role === 'host' },
+      playheadMs: () => room.playheadMs(),
+      play: () => room.control('PLAY'),
+      pause: () => room.control('PAUSE'),
+      seek: (positionMs: number) => room.control('SEEK', { positionMs }),
+      setTrack: (track: { stableKey: string }) => room.control('SET_TRACK', { track }),
+      setMode: (mode: string) => room.control('PLAYBACK_MODE', { mode }),
+      notifyTrackFinished: () => room.control('TRACK_FINISHED', { trackStableKey: room.currentState.playback.trackStableKey }),
+      requestPlay: () => room.request('REQUEST_PLAY'),
+      requestPause: () => room.request('REQUEST_PAUSE'),
+      requestSeek: (positionMs: number) => room.request('REQUEST_SEEK', { positionMs }),
+    }
+    this.session = new RoomSession({ client: adapter as never, player: createPlayerAdapter() })
+    room.start()
+    this.update({ roomId, memberId: room.memberId, role: role === 'host' ? 'CONTROLLER' : 'LISTENER', connected: false })
+    this.installPlayerHooks()
+  }
+
   /** 建房并成为控制端 */
   async createRoom(): Promise<JoinResult> {
+    if (this.isP2PMode()) {
+      const roomId = makeRoomId()
+      this.startP2P(roomId, 'host')
+      return { roomId, memberId: this.p2p!.memberId, role: 'CONTROLLER', memberSecret: '', wsUrl: 'p2p:' }
+    }
+    return this.createRoomHttp()
+  }
+
+  private async createRoomHttp(): Promise<JoinResult> {
     try {
       const client = this.ensureClient()
       const roomId = await client.createRoom()
@@ -144,6 +219,16 @@ class ListenTogetherService {
   }
 
   async join(roomId: string): Promise<JoinResult> {
+    if (this.isP2PMode()) {
+      const clean = roomId.trim().toLowerCase()
+      if (!/^[0-9a-z]{4,32}$/.test(clean)) {
+        const error = new Error('房号不合法（免部署房号是 4-32 位小写字母数字）')
+        this.update({ lastError: error.message })
+        throw error
+      }
+      this.startP2P(clean, 'guest')
+      return { roomId: clean, memberId: this.p2p!.memberId, role: 'LISTENER', memberSecret: '', wsUrl: 'p2p:' }
+    }
     try {
       return await this.joinInner(roomId)
     } catch (error) {
@@ -162,6 +247,16 @@ class ListenTogetherService {
   }
 
   async leave(): Promise<void> {
+    if (this.p2p) {
+      this.p2p.close()
+      this.p2p = null
+      this.session?.stop()
+      this.session = null
+      setPlayerHooks({})
+      this.hooksInstalled = false
+      this.update({ connected: false, roomId: null, role: null, memberId: null, members: [], state: null })
+      return
+    }
     const client = this.client
     const roomId = this.status.roomId
     this.session?.stop()
@@ -251,13 +346,35 @@ class ListenTogetherService {
   }
 
   /** 控制端：把本地操作同步到房间 */
-  pushPlay(): void { this.session?.notifyPlay() }
-  pushPause(): void { this.session?.notifyPause() }
-  pushSeek(positionMs?: number): void { this.session?.notifySeek(positionMs) }
-  pushTrack(): void { this.session?.notifyTrackChanged() }
+  pushPlay(): void {
+    if (this.p2p) { this.p2p.control('PLAY'); return }
+    this.session?.notifyPlay()
+  }
+  pushPause(): void {
+    if (this.p2p) { this.p2p.control('PAUSE'); return }
+    this.session?.notifyPause()
+  }
+  pushSeek(positionMs?: number): void {
+    if (this.p2p) { this.p2p.control('SEEK', { positionMs: positionMs ?? playerState.progress.nowPlayTime * 1000 }); return }
+    this.session?.notifySeek(positionMs)
+  }
+  pushTrack(): void {
+    if (this.p2p) {
+      const track = createPlayerAdapter().currentTrack()
+      if (track) this.p2p.control('SET_TRACK', { track })
+      return
+    }
+    this.session?.notifyTrackChanged()
+  }
   /** 成员端：申请 */
-  requestPlay(): void { this.session?.requestPlay() }
-  requestPause(): void { this.session?.requestPause() }
+  requestPlay(): void {
+    if (this.p2p) { this.p2p.request('REQUEST_PLAY'); return }
+    this.session?.requestPlay()
+  }
+  requestPause(): void {
+    if (this.p2p) { this.p2p.request('REQUEST_PAUSE'); return }
+    this.session?.requestPause()
+  }
 }
 
 export const listenTogether = new ListenTogetherService()
