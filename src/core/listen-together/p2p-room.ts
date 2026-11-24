@@ -529,9 +529,13 @@ export class P2PRoom {
   private touchMember(memberId: string): void {
     const existing = this.state.members.find(item => item.memberId === memberId)
     if (existing) {
-      existing.online = true
+      // 心跳只刷新时间戳，不广播：每 8 秒一次的 ping 不该引发全网广播
       existing.lastSeenAt = Date.now()
-      this.broadcastState()
+      if (!existing.online) {
+        existing.online = true
+        this.bumpVersion()
+        this.broadcastState()
+      }
       return
     }
     this.bumpVersion()
