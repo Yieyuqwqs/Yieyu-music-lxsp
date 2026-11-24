@@ -56,3 +56,19 @@ const parseInterval = (interval?: string | null): number => {
   for (const part of parts) seconds = seconds * 60 + part
   return parts.length ? seconds * 1000 : 0
 }
+
+
+// ---- 失效直链缓存（宪法第一条：不为坏状态加重试，而是记住并跳过） ----
+const DEAD_TTL_MS = 10 * 60 * 1000
+const dead = new Map<string, { at: number, status: number }>()
+
+export const rememberDeadUrl = (stableKey: string, status: number): void => {
+  dead.set(stableKey, { at: Date.now(), status })
+}
+
+export const isDeadUrl = (stableKey: string): boolean => {
+  const entry = dead.get(stableKey)
+  return entry ? Date.now() - entry.at <= DEAD_TTL_MS : false
+}
+
+export const clearDeadUrls = (): void => { dead.clear() }
