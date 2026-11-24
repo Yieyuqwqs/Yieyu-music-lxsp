@@ -9,6 +9,7 @@ import { writeFile } from '@/utils/fs'
 import { externalStorageDirectoryPath } from '@/utils/fs'
 import TrackPlayer from 'react-native-track-player'
 import { log } from '@/utils/log'
+import { reportError } from '@/core/listen-together/errors'
 
 const OUT_PATH = `${externalStorageDirectoryPath}/lxsp-autocheck.json`
 
@@ -31,6 +32,8 @@ const flush = async(): Promise<void> => {
     log.info(`[autocheck] wrote ${records.length} records → ${OUT_PATH}`)
   } catch (error) {
     log.warn(`[autocheck] write failed: ${(error as Error).message}`)
+    // 写盘失败必须可观测（Android 分区存储会拒绝 /sdcard 根目录写入）
+    reportError('autocheck:write', error)
   }
 }
 
