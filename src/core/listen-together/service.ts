@@ -12,7 +12,8 @@ import { setPlayMusicInfo } from '@/core/player/playInfo'
 import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
 import { P2PRoom, makeRoomId } from './p2p-room'
-import { getResolvedUrl, getLastResolvedUrl } from './resolved-url'
+import { getResolvedUrl, getLastResolvedUrl, rememberResolvedUrl } from './resolved-url'
+import { getMusicUrl } from '@/core/music'
 import { setPlayerHooks } from '@/core/player/hooks'
 import { getList } from '@/core/player/playInfo'
 import { playListById, setMusicUrl } from '@/core/player/player'
@@ -36,6 +37,8 @@ export interface RoomStatus {
   lastError: string | null
   /** 最近一条房间事件（切歌/对齐），方便排查「为什么没反应」 */
   lastEvent: string | null
+  /** 房间当前歌曲的实时状态（UI 每秒取一次 playheadMs 显示） */
+  nowPlaying: { name: string, singer: string, stableKey: string, isPlaying: boolean } | null
   /** 共享队列（房间里的，不是本地列表） */
   queue: TrackRef[]
   currentIndex: number
@@ -68,7 +71,7 @@ class ListenTogetherService {
   private status: RoomStatus = {
     connected: false, roomId: null, role: null, memberId: null,
     members: [], isPlaying: false, positionMs: 0, state: null, lastError: null, lastEvent: null,
-    queue: [], currentIndex: -1,
+    queue: [], currentIndex: -1, nowPlaying: null,
   }
   private listeners = new Set<(status: RoomStatus) => void>()
 
@@ -135,6 +138,10 @@ class ListenTogetherService {
           state: event.state,
           queue: [...event.state.queue],
           currentIndex: event.state.currentIndex,
+          nowPlaying: (() => {
+            const current = event.state.queue[event.state.currentIndex]
+            return current ? { name: current.name, singer: current.singer, stableKey: current.stableKey, isPlaying: event.state.playback.isPlaying } : null
+          })(),
           roomId: event.state.roomId,
           members: event.state.members.map(m => ({ memberId: m.memberId, role: m.role, online: m.online })),
           isPlaying: event.state.playback.isPlaying,
@@ -183,6 +190,13 @@ class ListenTogetherService {
           queue: [...state.queue],
           currentIndex: state.currentIndex,
         })
+        const current = state.queue[state.currentIndex]
+        this.update({
+          nowPlaying: current
+            ? { name: current.name, singer: current.singer, stableKey: current.stableKey, isPlaying: state.playback.isPlaying }
+            : null,
+        })
+        this.ensureQueueUrls()
         // 成员收到状态 → 对齐本地播放
         if (role === 'guest' && this.session) this.session.applyState(state)
       },
@@ -467,6 +481,37 @@ class ListenTogetherService {
     if (this.p2p) this.p2p.queueAdd([track])
     else void this.pushQueueAdd([track])
     this.update({ lastEvent: `已加入队列：${track.name}` })
+  }
+
+  /** 后台把队列里缺直链的歌解析出来（谁能解析谁解析，解析成功就分享给房间） */
+  private resolving = new Set<string>()
+  private ensureQueueUrls(): void {
+    const room = this.p2p
+    if (!room) return
+    for (const track of this.status.queue) {
+      if (track.url) continue
+      if (this.resolving.has(track.stableKey)) continue
+      if (!track.source || !track.id || track.source === 'local') continue
+      this.resolving.add(track.stableKey)
+      void (async() => {
+        try {
+          const info = toNewMusicInfo({
+            source: track.source, name: track.name, singer: track.singer,
+            songmid: track.id, interval: '', albumName: '', img: '',
+          })
+          const url = await getMusicUrl({ musicInfo: info as never })
+          if (url && /^https?:\/\//i.test(url)) {
+            rememberResolvedUrl(info as never, url)
+            room.shareUrl(track.stableKey, url)
+            this.update({ lastEvent: `队列已备好直链：${track.name}` })
+          }
+        } catch (error) {
+          // 解析不了就算了，播放时再尝试一次
+        } finally {
+          this.resolving.delete(track.stableKey)
+        }
+      })()
+    }
   }
 
   /** 把某首歌加进共享队列 */
