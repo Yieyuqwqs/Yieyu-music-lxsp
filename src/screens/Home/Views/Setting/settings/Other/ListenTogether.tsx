@@ -134,7 +134,7 @@ export default memo(() => {
           <View style={styles.group}>
             <Text size={13} color={theme['c-font-label']}>{`正在播放（房间）`}</Text>
             <Text size={13}>{`${status.nowPlaying.isPlaying ? '▶ ' : '⏸ '}${status.nowPlaying.name} - ${status.nowPlaying.singer}`}</Text>
-            <Text size={12} color={theme['c-500']} style={styles.hint}>{`${fmt(listenTogether.playheadMs())} · 与房间同步`}</Text>
+            <Text size={12} color={theme['c-500']} style={styles.hint}>{`${fmt(typeof listenTogether.playheadMs === 'function' ? listenTogether.playheadMs() : status.positionMs)} · 与房间同步`}</Text>
           </View>
         )
         : null}
@@ -149,18 +149,18 @@ export default memo(() => {
                   <Text
                     size={12}
                     color={index === status.currentIndex ? theme['c-font'] : theme['c-500']}
-                    onPress={() => listenTogether.playQueueIndex(index)}
+                    onPress={() => listenTogether.playQueueIndex?.(index)}
                     style={styles.queueText}
                   >
                     {`${index === status.currentIndex ? '▶ ' : ''}${index + 1}. ${track.name} - ${track.singer}`}
                   </Text>
-                  <Text size={12} color={theme['c-500']} onPress={() => listenTogether.removeFromQueue(track.stableKey)}>
+                  <Text size={12} color={theme['c-500']} onPress={() => listenTogether.removeFromQueue?.(track.stableKey)}>
                     {`删除`}
                   </Text>
                 </View>
               ))}
             <View style={styles.btnRow}>
-              <Button onPress={() => listenTogether.addCurrentToQueue()}>把当前歌曲加入队列</Button>
+              <Button onPress={() => listenTogether.addCurrentToQueue?.()}>把当前歌曲加入队列</Button>
             </View>
           </View>
         )
