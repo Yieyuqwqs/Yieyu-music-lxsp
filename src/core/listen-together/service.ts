@@ -232,6 +232,7 @@ class ListenTogetherService {
         }
       },
     })
+    this.session.start()
     room.start()
     this.update({ roomId, memberId: room.memberId, role: role === 'host' ? 'CONTROLLER' : 'LISTENER', connected: false })
     this.installPlayerHooks()
@@ -543,11 +544,17 @@ class ListenTogetherService {
     const track = this.status.queue[index]
     if (!track) return
     if (this.p2p) {
-      if (this.p2p.role === 'host') this.p2p.control('SET_TRACK', { track, index })
-      else this.p2p.request('REQUEST_SET_TRACK', { track })
+      if (this.p2p.role === 'host') {
+        // 关键：房主也要真的切本地播放，否则房间状态变了但自己没声音
+        void this.switchToTrack(track).finally(() => {
+          this.p2p?.control('SET_TRACK', { track, index })
+        })
+      } else {
+        this.p2p.request('REQUEST_SET_TRACK', { track })
+      }
       return
     }
-    this.session?.notifyTrackChanged(track, index)
+    void this.switchToTrack(track).finally(() => { this.session?.notifyTrackChanged(track, index) })
   }
 
   private async pushQueueAdd(tracks: TrackRef[]): Promise<void> {
