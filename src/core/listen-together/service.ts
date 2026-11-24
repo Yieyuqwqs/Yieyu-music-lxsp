@@ -426,7 +426,19 @@ class ListenTogetherService {
    * 房间切歌 → 本机自动切。
    * 顺序：当前列表里找 → 端点/内置搜索同名 → 都没有就只提示。
    */
+  private lastSwitchAt = 0
+  private lastSwitchKey = ""
+
   async switchToTrack(track: TrackRef): Promise<boolean> {
+    // 重入闸门：同一首 2 秒内只允许切换一次。
+    // 日志证据：成员/控制端都会在 state=3/6/8/0 循环里反复触发切歌，导致播放器被反复重建（表现为“跳回”+00:00）。
+    const now = Date.now()
+    const sameKey = track.stableKey === this.lastSwitchKey
+    const tooSoon = now - this.lastSwitchAt < 2000
+    this.update({ lastEvent: `切歌请求：${track.name}（${sameKey && tooSoon ? "重复，已忽略" : "执行"}）` })
+    if (sameKey && tooSoon) return false
+    this.lastSwitchAt = now
+    this.lastSwitchKey = track.stableKey
     await this.clearPreloads()
     try {
       this.update({ lastEvent: `收到切歌：${track.name} - ${track.singer}（${track.stableKey}）` })
