@@ -205,6 +205,10 @@ class ListenTogetherService {
             : null,
         })
         this.ensureQueueUrls()
+        if (role === 'guest') {
+          const next = state.queue[state.currentIndex + 1]
+          void this.preloadNextTrack(next)
+        }
         // 成员收到状态 → 对齐本地播放
         if (role === 'guest' && this.session) {
           const current = state.queue[state.currentIndex]
@@ -306,6 +310,7 @@ class ListenTogetherService {
   }
 
   async leave(): Promise<void> {
+    await this.clearPreloads()
     if (this.p2p) {
       this.p2p.close()
       this.p2p = null
@@ -369,6 +374,7 @@ class ListenTogetherService {
    * 顺序：当前列表里找 → 端点/内置搜索同名 → 都没有就只提示。
    */
   async switchToTrack(track: TrackRef): Promise<boolean> {
+    await this.clearPreloads()
     try {
       this.update({ lastEvent: `收到切歌：${track.name} - ${track.singer}（${track.stableKey}）` })
       // 最优：房主已经把直链解析好了，直接放它（不依赖搜索、不依赖两端 id 一致）
@@ -559,6 +565,8 @@ class ListenTogetherService {
   private resolving = new Set<string>()
   /** 已经预热过的直链（避免重复占用流量） */
   private warmed = new Set<string>()
+  /** 预缓冲轨的 id 前缀（绝不与 App 自己的 track id 冲突） */
+  private readonly PRELOAD_TRACK_PREFIX = 'lxp2p_preload_'
   /** 预加载窗口：当前曲目后面几首要提前解析好直链 */
   private readonly PRELOAD_AHEAD = 2
   private ensureQueueUrls(): void {
@@ -605,6 +613,36 @@ class ListenTogetherService {
     try {
       await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-32767' } })
     } catch (error) { /* 预热失败不影响播放 */ }
+  }
+
+  /** 把下一首塞进播放器队列做预缓冲（只对成员端有意义：房主那边是它自己在放） */
+  private async preloadNextTrack(track: TrackRef | undefined | null): Promise<void> {
+    if (!track?.url || !/^https?:/i.test(track.url)) return
+    if (settingState.setting['common.listenTogetherPrebuffer'] === false) return
+    try {
+      const queue = await TrackPlayer.getQueue() as Array<{ id?: string }>
+      const id = this.PRELOAD_TRACK_PREFIX + track.stableKey
+      if (queue.some(item => item?.id === id)) return
+      await TrackPlayer.add({
+        id,
+        url: track.url,
+        title: track.name,
+        artist: track.singer,
+        isLiveStream: false,
+      } as never)
+      this.update({ lastEvent: `已预缓冲下一首：${track.name}` })
+    } catch (error) { /* 预缓冲失败不影响播放 */ }
+  }
+
+  /** 清掉所有预缓冲轨（切歌前 / 离开房间时） */
+  private async clearPreloads(): Promise<void> {
+    try {
+      const queue = await TrackPlayer.getQueue() as Array<{ id?: string }>
+      for (let i = queue.length - 1; i >= 0; i--) {
+        const id = queue[i]?.id ?? ''
+        if (id.startsWith(this.PRELOAD_TRACK_PREFIX)) await TrackPlayer.remove(i)
+      }
+    } catch (error) { /* 忽略 */ }
   }
 
   /** 把某首歌加进共享队列 */
