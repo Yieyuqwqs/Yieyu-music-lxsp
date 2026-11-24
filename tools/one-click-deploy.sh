@@ -41,6 +41,30 @@ adb shell run-as "$PKG" cat /data/data/$PKG/files/error.log > "$OUT_DIR/app-erro
   adb shell run-as "$PKG" cat /data/user/0/$PKG/files/error.log > "$OUT_DIR/app-error.log" 2>/dev/null || \
   echo "（debug 包才能用 run-as；release 包请看 App 内「设置 → 其他 → 查看日志」）"
 
+echo "== 6/6 自动闭环：PlaybackError 自动提 Issue =="
+if grep -q "playback-error\|PlaybackError\|\[playback\] error=" "$OUT_DIR/logcat.txt" 2>/dev/null; then
+  echo "  检测到播放错误，提取上下文…"
+  grep -n -A6 -B2 "playback-error\|PlaybackError\|\[playback\] error=" "$OUT_DIR/logcat.txt" > "$OUT_DIR/playback-error.txt" || true
+  sed -n '1,40p' "$OUT_DIR/playback-error.txt"
+  REPO="${REPO:-Yieyuqwqs/Yieyu-music-lxsp}"
+  TOKEN="${GH_TOKEN:-}"
+  if [ -z "$TOKEN" ] && [ -f "$HOME/tools/.gh_token" ]; then TOKEN=$(cat "$HOME/tools/.gh_token"); fi
+  if [ -n "$TOKEN" ]; then
+    TITLE="[playback] PlaybackError 自动上报 $(date +%Y-%m-%d_%H:%M)"
+    BODY="自动捕获的播放错误（one-click-deploy）\n\n设备: $(adb shell getprop ro.product.model 2>/dev/null | tr -d '\r')\nAPK: $(basename "$APK")\n\n---\n$(sed -n '1,120p' "$OUT_DIR/playback-error.txt" | tr '\n' '\r')"
+    PAYLOAD=$(TITLE="$TITLE" BODY="$BODY" node -e 'process.stdout.write(JSON.stringify({title:process.env.TITLE, body:(process.env.BODY||"").replace(/\r/g,"\n")}))')
+    curl -sS -X POST "https://api.github.com/repos/$REPO/issues" \
+      -H "Authorization: Bearer $TOKEN" -H "User-Agent: one-click-deploy" \
+      -H "Content-Type: application/json" -d "$PAYLOAD" | tee "$OUT_DIR/issue.json"
+    echo
+    grep -o 'https://github.com/[^"]*/issues/[0-9]*' "$OUT_DIR/issue.json" | head -1 || true
+  else
+    echo "  没有 GH_TOKEN，跳过建 Issue；错误已存 $OUT_DIR/playback-error.txt"
+  fi
+else
+  echo "  未发现 PlaybackError（播放器没报错）"
+fi
+
 echo "== 5/5 结果 =="
 echo "  logcat       : $OUT_DIR/logcat.txt"
 echo "  App 内部日志 : $OUT_DIR/app-error.log"
