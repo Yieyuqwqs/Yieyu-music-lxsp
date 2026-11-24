@@ -18,6 +18,7 @@ const sections = [
   ['分支审计', run(process.execPath, ['tools/if-audit.mjs'])],
   ['全量测试', run(process.execPath, ['--import', './tests/lxsp/hook.mjs', 'tests/lxsp/run.mjs'])],
   ['真实链路闭环', run(process.execPath, ['tools/device-sim.mjs'])],
+  ['自动核验读取', run(process.execPath, ['tools/read-autocheck.mjs'])],
 ]
 
 const forbidden = ['人工判定', '需人工', '你装上看', '把日志发我', '自行判断', '麻烦你']
