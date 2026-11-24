@@ -16,7 +16,7 @@ import { monotonicMs, primeClock } from '@/utils/nativeModules/clockrt'
 import { isDirectAvailable } from '@/utils/nativeModules/p2p'
 import { cancelNative, pushAnchor, scheduleNative, startSyncPump, syncClear, syncPlayheadMs, isSyncEngineAvailable } from '@/utils/nativeModules/syncEngine'
 import { playheadAt } from './playhead'
-import { getResolvedUrl, getLastResolvedUrl, rememberResolvedUrl } from './resolved-url'
+import { getResolvedUrl, getLastResolvedUrl, isDeadUrl, rememberDeadUrl, rememberResolvedUrl } from './resolved-url'
 import { getMusicUrl } from '@/core/music'
 import { setPlayerHooks } from '@/core/player/hooks'
 import { getList } from '@/core/player/playInfo'
@@ -434,11 +434,20 @@ class ListenTogetherService {
       // 根因：之前手工 setPlayMusicInfo + setResource + setPlay 绕过了 App 的解析/校验/UA/降级链路，
       //   一旦这条直链在对方网络不可取（防盗链/签名过期），ExoPlayer 加载失败，
       //   表现就是主界面 00:00/00:00 无法播放，而房间状态已经推进（图一 00:25、图二 00:00）。
-      if (track.url && /^https?:\/\//i.test(track.url)) {
+      const deadUrl = isDeadUrl(track.stableKey)
+      deadUrl && this.update({ lastEvent: `直链已判定失效，跳过：${track.name}` })
+      if (track.url && !deadUrl && /^https?:\/\//i.test(track.url)) {
         const media = await this.probeMediaUrl(track.url)
-        if (!media.ok) {
-          this.update({ lastEvent: `房间直链不可用（http=${media.status} 字节=${media.bytes}），改用本机解析：${track.name}` })
-        } else {
+        // 链接已被对端网络拒绝（403/HTML/超时）：直接停在这里，不播放、不重试。
+        media.ok || (() => {
+          rememberDeadUrl(track.stableKey, media.status)
+          reportError('room-url-dead', new Error(`http=${media.status} bytes=${media.bytes} type=${media.type}`))
+          this.update({
+            lastError: `房主分享的直链已失效（http=${media.status} ${media.type || '-'}），已停止重试；等房主重新同步`,
+            lastEvent: `跳过失效直链：${track.name}`,
+          })
+        })()
+        if (!media.ok) return false
         const info = toNewMusicInfo({
           source: track.source,
           name: track.name,
@@ -453,9 +462,8 @@ class ListenTogetherService {
           rememberResolvedUrl(info as never, track.url)
           setPlayMusicInfo(null, info, true)
           setMusicUrl(info as never)
-          this.update({ lastError: null, lastEvent: `按房间直链播放：${track.name}（已验证 ${media.status}/${media.bytes}B）` })
-          return true
-        }
+        this.update({ lastError: null, lastEvent: `按房间直链播放：${track.name}（已验证 ${media.status}/${media.bytes}B）` })
+        return true
       }
 
       // 次优：房间给的 source:id 就是平台歌曲 ID，还原成在线曲目交给播放器
