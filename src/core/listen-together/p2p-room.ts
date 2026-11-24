@@ -30,8 +30,8 @@ export interface P2PRoomOptions {
   /** 备用 MQTT broker（并行发送，用来压尾延迟） */
   altBrokerUrl?: string
   enableDirect?: boolean
-  /** 直连状态变化（UI/日志用） */
-  onDirectChange?: (state: { up: boolean, local?: string, remote?: string }) => void
+  /** 通道状态变化（唯一真相来源）：connecting=正在打洞，direct=UDP 直连，relay=MQTT 中转 */
+  onTransportChange?: (state: { transport: 'connecting' | 'direct' | 'relay', local?: string, remote?: string }) => void
 }
 
 const BROADCAST_MS = 3_000 // 兜底广播：3 秒一次（真机消息几十毫秒，丢一条也能立刻补）
@@ -57,6 +57,8 @@ export class P2PRoom {
   private rttMs = 0
   // ---- 直连通道 ----
   private directUp = false
+  /** 当前通道（唯一真相） */
+  private transport: 'connecting' | 'direct' | 'relay' = 'connecting'
   private myMapped: string | null = null
   private peerMapped: string | null = null
   private stopPump: (() => void) | null = null
@@ -88,6 +90,7 @@ export class P2PRoom {
       clientId: `lx-${options.roomId}-${this.memberId}`.slice(0, 60),
       onConnect: () => {
         this.mqtt.subscribe(topicOf(this.roomId))
+        this.setTransport(this.directUp ? 'direct' : 'relay')
         this.options.onConnected?.()
         if (this.role === 'host') {
           this.broadcastState()
@@ -136,16 +139,23 @@ export class P2PRoom {
     void this.bringUpDirect()
   }
 
+  /** 通道状态只有一个写入口 */
+  private setTransport(next: 'connecting' | 'direct' | 'relay'): void {
+    if (this.transport === next) return
+    this.transport = next
+    this.options.onTransportChange?.({ transport: next, local: this.myMapped ?? undefined, remote: this.peerMapped ?? undefined })
+  }
+
   /** 起 UDP 直连：STUN 拿映射 → 用 MQTT 交换 → 打洞 → 起推送泵 */
   private async bringUpDirect(): Promise<void> {
     if (!this.enableDirect || !isDirectAvailable()) return
     const address = await directStart()
     if (!address) {
-      this.options.onDirectChange?.({ up: false })
+      this.setTransport('relay')
       return
     }
     this.myMapped = address.mapped
-    this.options.onDirectChange?.({ up: false, local: address.mapped })
+    this.setTransport('relay')
     this.sendHello()
   }
 
@@ -161,9 +171,9 @@ export class P2PRoom {
     if (this.directUp || !mapped || mapped === this.myMapped) return
     this.peerMapped = mapped
     const ok = await directConnect(mapped)
-    if (!ok) { this.options.onDirectChange?.({ up: false, local: this.myMapped ?? undefined, remote: mapped }); return }
+    if (!ok) { this.setTransport('relay'); return }
     this.directUp = true
-    this.options.onDirectChange?.({ up: true, local: this.myMapped ?? undefined, remote: mapped })
+    this.setTransport('direct')
     this.stopPump = startDirectPump((text) => {
       // 直连收到的消息和 MQTT 走同一条处理路径（重复包由业务去重）
       this.handleMessage(topicOf(this.roomId), text)
