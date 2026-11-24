@@ -8,6 +8,7 @@
  * 协议字段与 Cloudflare/local 版本完全一致，所以 RoomSession 那层不用改。
  */
 import { MqttClient, DEFAULT_BROKER } from './mqtt'
+import { directConnect, directSend, directStart, isDirectAvailable, startDirectPump } from '@/utils/nativeModules/p2p'
 import { anchorForPause, anchorForPlay, anchorForSeek, anchorForSetTrack, emptyClockSync, localPlayhead, mergePong, type ClockSync } from './playhead'
 import {
   emptyPlayback, defaultSettings, type PlaybackMode, type RoomState, type ServerMessage, type TrackRef,
@@ -25,6 +26,10 @@ export interface P2PRoomOptions {
   onDisconnected?: () => void
   onRejected?: (requestType: string, reason: string) => void
   onError?: (message: string) => void
+  /** UDP 直连（C++ STUN 打洞）；默认开，失败自动只走 MQTT */
+  enableDirect?: boolean
+  /** 直连状态变化（UI/日志用） */
+  onDirectChange?: (state: { up: boolean, local?: string, remote?: string }) => void
 }
 
 const BROADCAST_MS = 3_000 // 兜底广播：3 秒一次（真机消息几十毫秒，丢一条也能立刻补）
@@ -46,6 +51,13 @@ export class P2PRoom {
   private lastPingAt = 0
   /** 实测往返时延（来自 np_pong），用来算自适应提前量 */
   private rttMs = 0
+  // ---- 直连通道 ----
+  private directUp = false
+  private myMapped: string | null = null
+  private peerMapped: string | null = null
+  private stopPump: (() => void) | null = null
+  private sentHello = false
+  private readonly enableDirect: boolean
   /** 最近一次别人分享的直链，本机解析失败时可直接用 */
   private lastSharedUrl: { key: string, url: string } | null = null
   private closed = false
@@ -54,6 +66,7 @@ export class P2PRoom {
     this.options = options
     this.roomId = options.roomId
     this.role = options.role
+    this.enableDirect = options.enableDirect !== false
     this.memberId = options.memberId ?? `m-${Math.random().toString(16).slice(2, 10)}`
     this.state = {
       roomId: options.roomId,
@@ -103,6 +116,45 @@ export class P2PRoom {
 
   start(): void {
     this.mqtt.connect()
+    void this.bringUpDirect()
+  }
+
+  /** 起 UDP 直连：STUN 拿映射 → 用 MQTT 交换 → 打洞 → 起推送泵 */
+  private async bringUpDirect(): Promise<void> {
+    if (!this.enableDirect || !isDirectAvailable()) return
+    const address = await directStart()
+    if (!address) {
+      this.options.onDirectChange?.({ up: false })
+      return
+    }
+    this.myMapped = address.mapped
+    this.options.onDirectChange?.({ up: false, local: address.mapped })
+    this.sendHello()
+  }
+
+  /** 把本机映射告诉对方（只走 MQTT，一次而已） */
+  private sendHello(): void {
+    if (!this.myMapped || this.sentHello) return
+    this.sentHello = true
+    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ t: 'H', m: this.myMapped, f: this.memberId, r: this.role }))
+  }
+
+  /** 收到对方映射 → 打洞 → 之后控制消息走 UDP */
+  private async connectPeer(mapped: string): Promise<void> {
+    if (this.directUp || !mapped || mapped === this.myMapped) return
+    this.peerMapped = mapped
+    const ok = await directConnect(mapped)
+    if (!ok) { this.options.onDirectChange?.({ up: false, local: this.myMapped ?? undefined, remote: mapped }); return }
+    this.directUp = true
+    this.options.onDirectChange?.({ up: true, local: this.myMapped ?? undefined, remote: mapped })
+    this.stopPump = startDirectPump((text) => {
+      // 直连收到的消息和 MQTT 走同一条处理路径（重复包由业务去重）
+      this.handleMessage(topicOf(this.roomId), text)
+    })
+  }
+
+  get directConnected(): boolean {
+    return this.directUp
   }
 
   close(): void {
@@ -111,6 +163,8 @@ export class P2PRoom {
     this.broadcastTimer = null
     if (this.clockTimer) clearInterval(this.clockTimer)
     this.clockTimer = null
+    if (this.stopPump) { this.stopPump(); this.stopPump = null }
+    this.directUp = false
     if (this.watchdogTimer) clearInterval(this.watchdogTimer)
     this.watchdogTimer = null
     this.mqtt.close()
@@ -129,6 +183,12 @@ export class P2PRoom {
       this.pruneMembers()
       this.broadcastState()
     }, BROADCAST_MS)
+  }
+
+  /** 双通道发送：直连优先（几毫秒），MQTT 兜底（保证送达） */
+  private publishBoth(payload: string): void {
+    if (this.directUp) void directSend(payload)
+    this.mqtt.publish(topicOf(this.roomId), payload)
   }
 
   /** 紧凑状态：热路径上每次只发必要字段，少几十上百字节，中转更快 */
@@ -151,7 +211,8 @@ export class P2PRoom {
   private broadcastState(): void {
     if (this.role !== 'host') return
     // 用它压缩后的负载：字段短、体积小，热路径上省下序列化与中转时间
-    this.mqtt.publish(topicOf(this.roomId), this.compactState())
+    const payload = this.compactState()
+    this.publishBoth(payload)
     this.options.onState?.(this.state, Date.now())
   }
 
@@ -300,6 +361,17 @@ export class P2PRoom {
     if (!message) return
 
     // 紧凑状态（t=S，房主热路径）：先处理，避免被下面的 type 判断挡掉
+    // 直连信令：对方的本机公网映射
+    if (message.t === 'H') {
+      const mapped = String(message.m ?? '')
+      const fromId = String(message.f ?? '')
+      if (fromId && fromId !== this.memberId && mapped) {
+        this.sendHello() // 对方可能还没收到我的，再发一次（幂等）
+        void this.connectPeer(mapped)
+      }
+      return
+    }
+
     if (message.t === 'S' && this.role === 'guest') {
       const state: RoomState = {
         roomId: String(message.r ?? this.roomId),
