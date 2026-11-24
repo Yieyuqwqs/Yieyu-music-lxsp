@@ -33,6 +33,7 @@ import { checkIgnoringBatteryOptimization, checkNotificationPermission, debounce
 import { LIST_IDS } from '@/config/constant'
 import { addListMusics, removeListMusics } from '@/core/list'
 import { addDislikeInfo } from '@/core/dislikeList'
+import { isPlayableMediaUrl } from '@/core/player/url-guard'
 
 // import { checkMusicFileAvailable } from '@renderer/utils/music'
 
@@ -119,9 +120,11 @@ const getMusicPlayUrl = async(musicInfo: LX.Music.MusicInfo | LX.Download.ListIt
         setStatusText(global.i18n.t('toggle_source_try'))
       },
     })
-  }).then(url => {
+  }).then(async url => {
     if (global.lx.isPlayedStop || diffCurrentMusicInfo(musicInfo)) return null
-
+    if (!url) return null
+    const playable = await isPlayableMediaUrl(url)
+    if (!playable) throw new Error('url-unplayable')
     return url
   }).catch(async err => {
     // console.log('err', err.message)
