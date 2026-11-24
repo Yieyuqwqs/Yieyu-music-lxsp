@@ -79,7 +79,6 @@ export type ClientMessage =
   /** 谁都可以喊一声「给我当前状态」（新加入/丢包时用） */
   | { type: 'SYNC_REQUEST', from?: string }
   /** 谁解析出了直链都可以分享给房间，别人直接复用 */
-  | { type: 'URL_SHARE', stableKey: string, url: string, from?: string }
 
 export interface ServerStateMessage { type: 'room_state_updated', state: RoomState, serverNow: number }
 export interface ServerPongMessage { type: 'np_pong', clientNow: number, serverNow: number, clientId?: string }
