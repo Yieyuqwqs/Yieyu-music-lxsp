@@ -27,9 +27,10 @@ export const logPlaybackState = (state: string, detail: Record<string, unknown> 
 export const logPlaybackError = async(error: unknown): Promise<void> => {
   const detail: Record<string, unknown> = {}
   try {
-    detail.active = (await TrackPlayer.getActiveTrack()) as unknown
-    detail.duration = await TrackPlayer.getDuration()
-    detail.position = await TrackPlayer.getPosition()
+    const tp = TrackPlayer as unknown as Record<string, undefined | (() => Promise<unknown>)>
+    detail.active = await tp.getActiveTrack?.()
+    detail.duration = await tp.getDuration?.()
+    detail.position = await tp.getPosition?.()
   } catch (err) {
     detail.probeError = (err as Error).message
   }
