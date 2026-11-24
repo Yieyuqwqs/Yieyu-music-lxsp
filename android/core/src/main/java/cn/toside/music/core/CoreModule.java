@@ -252,6 +252,83 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
     p2pPumpThread = null;
     promise.resolve(true);
   }
+  // ---------------- 一起听：原生同步引擎（锚点 + 播放头 + 定时调度） ----------------
+
+  @ReactMethod
+  public void syncSetAnchor(double positionMs, double anchorMonoUs, boolean playing, Promise promise) {
+    try {
+      nativeSyncAnchor(positionMs, anchorMonoUs, playing);
+      promise.resolve(true);
+    } catch (Throwable error) {
+      promise.reject("E_SYNC", error);
+    }
+  }
+
+  @ReactMethod
+  public void syncPlayheadMs(Promise promise) {
+    try {
+      promise.resolve(nativeSyncPlayheadMs());
+    } catch (Throwable error) {
+      promise.reject("E_SYNC", error);
+    }
+  }
+
+  @ReactMethod
+  public void syncLeadMs(Promise promise) {
+    try {
+      promise.resolve(nativeSyncLeadMs());
+    } catch (Throwable error) {
+      promise.reject("E_SYNC", error);
+    }
+  }
+
+  @ReactMethod
+  public void syncNowUs(Promise promise) {
+    try {
+      promise.resolve(nativeSyncNowUs());
+    } catch (Throwable error) {
+      promise.reject("E_SYNC", error);
+    }
+  }
+
+  @ReactMethod
+  public void syncSchedule(int commandId, int delayMs, Promise promise) {
+    try {
+      nativeSyncSchedule(commandId, delayMs);
+      promise.resolve(true);
+    } catch (Throwable error) {
+      promise.reject("E_SYNC", error);
+    }
+  }
+
+  @ReactMethod
+  public void syncCancel(int commandId, Promise promise) {
+    try {
+      nativeSyncCancel(commandId);
+      promise.resolve(true);
+    } catch (Throwable error) {
+      promise.reject("E_SYNC", error);
+    }
+  }
+
+  @ReactMethod
+  public void syncClear(Promise promise) {
+    try {
+      nativeSyncClear();
+      promise.resolve(true);
+    } catch (Throwable error) {
+      promise.reject("E_SYNC", error);
+    }
+  }
+
+  private static native void nativeSyncAnchor(double positionMs, double anchorMonoUs, boolean playing);
+  private static native double nativeSyncPlayheadMs();
+  private static native double nativeSyncLeadMs();
+  private static native double nativeSyncNowUs();
+  private static native void nativeSyncSchedule(int commandId, int delayMs);
+  private static native void nativeSyncCancel(int commandId);
+  private static native int[] nativeSyncTakeDue();
+  private static native void nativeSyncClear();
   // ---------------- 一起听：UDP 直连（纯 C++ 实现，STUN 打洞） ----------------
 
   @ReactMethod
