@@ -28,6 +28,7 @@ import { pickBestTrack, stableKeyOfMusicInfo } from './track-map'
 import type { TrackRef } from './protocol'
 import { RoomSession, type PlayerAdapter } from './room'
 import type { JoinResult, RoomState } from './protocol'
+import { reportError } from '@/core/listen-together/errors'
 
 export interface RoomStatus {
   connected: boolean
@@ -115,7 +116,7 @@ class ListenTogetherService {
     this.status = { ...this.status, ...patch }
     const snapshot = this.getStatus()
     for (const listener of this.listeners) {
-      try { listener(snapshot) } catch (error) { /* 忽略单个订阅者异常 */ }
+      try { listener(snapshot) } catch (error) { reportError('listener', error) }
     }
   }
 
