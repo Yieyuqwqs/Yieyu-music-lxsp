@@ -15,7 +15,7 @@ const t = {
     throw new Error(`${label}: 期望抛错`)
   },
 }
-for (const file of ['./clock.test.mjs', './room.test.mjs']) {
+for (const file of ['./clock.test.mjs', './room.test.mjs', './local-server.test.mjs']) {
   const mod = await import(file)
   mod.default(t)
 }
