@@ -255,7 +255,6 @@ class ListenTogetherService {
             ? { name: current.name, singer: current.singer, stableKey: current.stableKey, isPlaying: state.playback.isPlaying }
             : null,
         })
-        this.ensureQueueUrls()
         // 角色差异用查表派发，不写条件分支
         const roleHandlers = {
           host: () => {},
@@ -708,42 +707,6 @@ class ListenTogetherService {
   private readonly PRELOAD_TRACK_PREFIX = 'lxp2p_preload_'
   /** 预加载窗口：当前曲目后面几首要提前解析好直链 */
   private readonly PRELOAD_AHEAD = 2
-  private ensureQueueUrls(): void {
-    const room = this.p2p
-    if (!room) return
-    // 只预热「当前 + 后两首」，别把 200 首全解析了
-    const from = Math.max(0, this.status.currentIndex)
-    const window_ = this.status.queue.slice(from, from + this.PRELOAD_AHEAD + 1)
-    for (const track of window_) {
-      if (track.url) continue
-      if (this.resolving.has(track.stableKey)) continue
-      const failedAt = this.resolveFailedAt.get(track.stableKey)
-      if (failedAt && Date.now() - failedAt < 60_000) continue
-      if (!track.source || !track.id || track.source === 'local') continue
-      this.resolving.add(track.stableKey)
-      void (async() => {
-        try {
-          const info = toNewMusicInfo({
-            source: track.source, name: track.name, singer: track.singer,
-            songmid: track.id, interval: '', albumName: '', img: '',
-          })
-          const url = await getMusicUrl({ musicInfo: info as never })
-          if (url && /^https?:\/\//i.test(url)) {
-            this.resolveFailedAt.delete(track.stableKey)
-            rememberResolvedUrl(info as never, url)
-            room.shareUrl(track.stableKey, url)
-            void this.warmUpUrl(url)
-            this.update({ lastEvent: `队列已备好直链：${track.name}` })
-          }
-        } catch (error) {
-          // 记一次失败时间，60 秒内不再重试（播放时仍会尝试）
-          this.resolveFailedAt.set(track.stableKey, Date.now())
-        } finally {
-          this.resolving.delete(track.stableKey)
-        }
-      })()
-    }
-  }
 
   /**
    * 预热直链：只拉前 32KB。
