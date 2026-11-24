@@ -4,7 +4,7 @@
  * 极简交互：填服务器 → 建房或加入 → 看成员 → 控制端直接控，成员端「申请」。
  * 音频永远不经服务端，这里只同步「放什么、放到哪」。
  */
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { TextInput, View } from 'react-native'
 import Clipboard from '@react-native-clipboard/clipboard'
 
@@ -29,6 +29,19 @@ export default memo(() => {
   useEffect(() => setServer(savedServer), [savedServer])
 
   useEffect(() => listenTogether.subscribe(setStatus), [])
+
+  // 每秒刷新一次房间播放头（这就是「实时同步歌曲状态」的显示端）
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!status.roomId) return
+    const timer = setInterval(() => setTick(t => t + 1), 1000)
+    return () => clearInterval(timer)
+  }, [status.roomId])
+
+  const fmt = (ms: number) => {
+    const total = Math.max(0, Math.floor(ms / 1000))
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+  }
 
   const run = useCallback((task: () => Promise<unknown>) => {
     setBusy(true)
@@ -116,6 +129,15 @@ export default memo(() => {
         <Button onPress={handleLeave} disabled={busy || !inRoom}>离开</Button>
       </View>
 
+      {status.nowPlaying
+        ? (
+          <View style={styles.group}>
+            <Text size={13} color={theme['c-font-label']}>{`正在播放（房间）`}</Text>
+            <Text size={13}>{`${status.nowPlaying.isPlaying ? '▶ ' : '⏸ '}${status.nowPlaying.name} - ${status.nowPlaying.singer}`}</Text>
+            <Text size={12} color={theme['c-500']} style={styles.hint}>{`${fmt(listenTogether.playheadMs())} · 与房间同步`}</Text>
+          </View>
+        )
+        : null}
       {inRoom
         ? (
           <View style={styles.group}>
