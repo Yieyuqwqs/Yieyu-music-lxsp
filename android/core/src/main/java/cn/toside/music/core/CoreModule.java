@@ -230,8 +230,8 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
           byte[] bytes = nativeP2PPoll(80);
           if (bytes != null && bytes.length > 0) {
             String text = new String(bytes, "UTF-8");
-            if (reactContext != null && reactContext.hasActiveReactInstance()) {
-              reactContext
+            if (getReactApplicationContext().hasActiveReactInstance()) {
+              getReactApplicationContext()
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
                 .emit("lxp2p:message", text);
             }
