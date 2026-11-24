@@ -138,3 +138,24 @@ export default (t) => {
     t.eq(offenders, [], 'mock 必须先剥离或经人类豁免')
   })
 }
+
+// 追加：鉴权路径必须显式被测（宪法第八条：不许把 401 当"环境限制"跳过）
+export const authSuite = (t) => {
+  t.suite('真实链路：鉴权路径（401 → 200）必须显式验证', async() => {
+    const target = 'http://127.0.0.1:1101/api/v0/url/kw/62355680/320k'
+    const noKey = await fetchText(target, {}, 5000)
+    if (noKey.status === 0) {
+      console.log('  SKIP：本地网关未启动（status=0）——这不是通过，是没测')
+      t.ok(true, '网关未启动，明确跳过')
+      return
+    }
+    console.log(`  不带 token → http=${noKey.status}`)
+    t.eq(noKey.status, 401, '不带 key 必须 401（鉴权生效）')
+    const withKey = await fetchText(target, {
+      headers: { 'X-Api-Key': 'Cyb-P2077-n30h4ck3r-0X', Authorization: 'Bearer Cyb-P2077-n30h4ck3r-0X' },
+    }, 6000)
+    console.log(`  带 token → http=${withKey.status}`)
+    t.eq(withKey.status, 200, '带正确 key 必须 200')
+    t.ok(extractUrl(withKey.text) != null, '响应必须含真实直链')
+  })
+}
