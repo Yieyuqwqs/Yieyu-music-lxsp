@@ -12,6 +12,8 @@ import { setPlayMusicInfo } from '@/core/player/playInfo'
 import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
 import { P2PRoom, makeRoomId } from './p2p-room'
+import { monotonicMs, primeClock } from '@/utils/nativeModules/clockrt'
+import { playheadAt } from './playhead'
 import { getResolvedUrl, getLastResolvedUrl, rememberResolvedUrl } from './resolved-url'
 import { getMusicUrl } from '@/core/music'
 import { setPlayerHooks } from '@/core/player/hooks'
@@ -67,6 +69,8 @@ const createPlayerAdapter = (): PlayerAdapter => ({
 class ListenTogetherService {
   private client: ListenTogetherClient | null = null
   private clientBaseUrl = ''
+  /** 成员端上一次应用过的房间曲目（用来判断“换歌了”） */
+  private lastGuestTrackKey: string | null = null
   private session: RoomSession | null = null
   private status: RoomStatus = {
     connected: false, roomId: null, role: null, memberId: null,
@@ -179,6 +183,7 @@ class ListenTogetherService {
       onConnected: () => this.update({ connected: true, lastError: null, roomId }),
       onDisconnected: () => this.update({ connected: false }),
       onState: (state, serverNow) => {
+        void primeClock()
         this.update({
           state,
           roomId: state.roomId,
@@ -198,7 +203,16 @@ class ListenTogetherService {
         })
         this.ensureQueueUrls()
         // 成员收到状态 → 对齐本地播放
-        if (role === 'guest' && this.session) this.session.applyState(state)
+        if (role === 'guest' && this.session) {
+          const current = state.queue[state.currentIndex]
+          const changed = current && current.stableKey !== this.lastGuestTrackKey
+          if (current && changed) {
+            this.lastGuestTrackKey = current.stableKey
+            this.scheduleMemberStart(current, state.playback.anchorServerMs, state.playback.positionMs, serverNow)
+          } else {
+            this.session.applyState(state)
+          }
+        }
       },
       onRejected: (requestType, reason) => this.update({ lastError: `请求被拒（${requestType}）：${reason}` }),
       onError: (message) => this.update({ lastError: message }),
@@ -485,6 +499,36 @@ class ListenTogetherService {
   private isHost(): boolean {
     if (this.p2p) return this.p2p.role === 'host'
     return this.client?.isController ?? false
+  }
+
+  private startTimer: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * 成员端「按锚点起播」：房主的 SET_TRACK 带 400ms 提前量，
+   * 收到后不立刻播，而是等到锚点生效的那一刻再 seek+play ——
+   * 这样两端的第一个音符是同一秒出声，而不是“你先响 1 秒我才加载完”。
+   */
+  private scheduleMemberStart(track: TrackRef, anchorServerMs: number, positionMs: number, serverNow: number): void {
+    if (this.startTimer) { clearTimeout(this.startTimer); this.startTimer = null }
+    const monoAtReceive = monotonicMs()
+    const leadMs = anchorServerMs - serverNow // 通常 400ms
+    const fireIn = Math.max(0, Math.min(2000, leadMs))
+    this.startTimer = setTimeout(() => {
+      this.startTimer = null
+      const monoNow = monotonicMs()
+      const late = Math.max(0, monoNow - monoAtReceive)
+      // 精确位置：锚点时刻应有的位置 + 我们已经晚到的部分（单调时钟，无墙钟误差）
+      const target = Math.max(0, positionMs + Math.max(0, late - leadMs))
+      void this.startTrackAt(track, target)
+    }, fireIn)
+  }
+
+  /** 在指定位置开始播放这首歌（成员端） */
+  private async startTrackAt(track: TrackRef, positionMs: number): Promise<void> {
+    const ok = await this.switchToTrack(track)
+    if (!ok) return
+    void setCurrentTime(positionMs / 1000)
+    this.update({ lastEvent: `已对齐起播：${track.name} @ ${(positionMs / 1000).toFixed(2)}s` })
   }
 
   /** 房间播放头（毫秒）：p2p 用房间时钟、http 用客户端时钟，UI 每秒取一次 */
