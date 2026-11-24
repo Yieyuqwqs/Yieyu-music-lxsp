@@ -108,6 +108,24 @@ export default (t) => {
     t.ok(/case TPState\.Ready:[\s\S]{0,200}refreshDuration\(\)/.test(playerService), 'Ready 必须调用 refreshDuration')
   })
 
+  t.suite('审计：诚实与不甩锅可机械验证（第 8/12 条）', () => {
+    const status = JSON.parse(read('docs/status.json'))
+    t.ok(Array.isArray(status.claims) && status.claims.length > 0, 'status.json 必须有声明')
+    const badSources = status.claims.filter((c) => !['实测', '理论', '未接上'].includes(c.source))
+    t.eq(badSources.map((c) => c.id), [], '来源必须是 实测/理论/未接上')
+    const missingEvidence = status.claims.filter((c) => c.source === '实测' && (!c.evidence || !c.evidence.length))
+    t.eq(missingEvidence.map((c) => c.id), [], '实测必须有证据命令')
+  })
+
+  t.suite('审计：交接报告必须由真实输出生成且无甩锅句式', () => {
+    const report = read('docs/handover/latest.md')
+    const forbidden = ['人工判定', '需人工', '你装上看', '把日志发我', '自行判断', '麻烦你']
+    const hits = forbidden.filter((word) => report.includes(word))
+    t.eq(hits, [], '禁止甩锅句式')
+    t.ok(/```/.test(report), '必须包含真实命令输出块')
+    t.ok(report.includes('全绿') || report.includes('PASS'), '必须含可验证结果')
+  })
+
   t.suite('审计：契约测试在位', () => {
     t.ok(existsSync(fileURLToPath(new URL('./contract-listen-together.test.mjs', import.meta.url))), '契约测试存在')
   })
