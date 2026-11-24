@@ -58,6 +58,8 @@ export interface RoomState {
   playbackMode: PlaybackMode
   members: MemberState[]
   settings: RoomSettings
+  /** 状态版本号：每次变更 +1 */
+  version: number
   /** 服务端最后改写时间 */
   updatedAt: number
 }
