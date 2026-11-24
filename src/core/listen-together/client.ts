@@ -36,6 +36,8 @@ export interface ListenTogetherOptions {
   now?: () => number
   /** np_ping 间隔，默认 5s */
   pingIntervalMs?: number
+  /** HTTP 超时，默认 10s（workers.dev 在部分网络里会直接挂住） */
+  requestTimeoutMs?: number
   /** 重连退避上限，默认 8s */
   maxBackoffMs?: number
 }
@@ -53,6 +55,7 @@ export class ListenTogetherClient {
   private readonly now: () => number
   private readonly pingIntervalMs: number
   private readonly maxBackoffMs: number
+  private readonly requestTimeoutMs: number
 
   private ws: WebSocketLike | null = null
   private session: JoinResult | null = null
@@ -73,6 +76,7 @@ export class ListenTogetherClient {
     this.now = options.now ?? Date.now
     this.pingIntervalMs = options.pingIntervalMs ?? 5000
     this.maxBackoffMs = options.maxBackoffMs ?? 8000
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000
   }
 
   // ------------------------------------------------------------ 事件
@@ -91,11 +95,23 @@ export class ListenTogetherClient {
   // ------------------------------------------------------------ HTTP
 
   private async call<T>(path: string, body?: unknown): Promise<T> {
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-      method: body === undefined ? 'GET' : 'POST',
-      headers: body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    })
+    // 手机网络对 workers.dev 这类域名可能直接挂住：必须自己加超时，否则 UI 会永远「处理中」
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    const timer = controller ? setTimeout(() => controller.abort(), this.requestTimeoutMs) : null
+    let response: Awaited<ReturnType<typeof fetch>>
+    try {
+      response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller?.signal,
+      })
+    } catch (error) {
+      const aborted = (error as Error)?.name === 'AbortError'
+      throw Object.assign(new Error(aborted ? `请求超时（${this.requestTimeoutMs}ms）` : `连不上服务器：${(error as Error).message}`), { code: aborted ? 'timeout' : 'network' })
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
     const payload = await response.json().catch(() => null) as { ok?: boolean, data?: T, error?: { code: string, message: string } } | null
     if (!payload || payload.ok !== true || payload.data === undefined) {
       const code = payload?.error?.code ?? 'http_' + response.status
