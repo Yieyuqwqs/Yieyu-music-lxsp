@@ -728,7 +728,7 @@ class ListenTogetherService {
     this.warmed.add(url)
     try {
       await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-32767' } })
-    } catch (error) { /* 预热失败不影响播放 */ }
+    } catch (error) { reportError('warmup', error) }
   }
 
   /** 把下一首塞进播放器队列做预缓冲（只对成员端有意义：房主那边是它自己在放） */
@@ -747,7 +747,7 @@ class ListenTogetherService {
         isLiveStream: false,
       } as never)
       this.update({ lastEvent: `已预缓冲下一首：${track.name}` })
-    } catch (error) { /* 预缓冲失败不影响播放 */ }
+    } catch (error) { reportError('service', error) }
   }
 
   /** 清掉所有预缓冲轨（切歌前 / 离开房间时） */
@@ -758,7 +758,7 @@ class ListenTogetherService {
         const id = queue[i]?.id ?? ''
         if (id.startsWith(this.PRELOAD_TRACK_PREFIX)) await TrackPlayer.remove(i)
       }
-    } catch (error) { /* 忽略 */ }
+    } catch (error) { reportError('service', error) }
   }
 
   /** 占位音质表：还原曲目时必须有，否则音源层读 qualitys.xxx 会抛异常 */
