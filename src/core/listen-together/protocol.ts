@@ -45,6 +45,8 @@ export interface RoomState {
   playbackMode: PlaybackMode
   members: MemberState[]
   settings: RoomSettings
+  /** 状态版本号：每次变更 +1；接收端只接受更大的版本（防乱序覆盖） */
+  version: number
   updatedAt: number
 }
 
