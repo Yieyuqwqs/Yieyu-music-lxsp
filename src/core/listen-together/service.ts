@@ -347,7 +347,14 @@ class ListenTogetherService {
 
   /** 控制端：把本地操作同步到房间 */
   pushPlay(): void {
-    if (this.p2p) { this.p2p.control('PLAY'); return }
+    if (this.p2p) {
+      const track = createPlayerAdapter().currentTrack()
+      if (track && track.stableKey !== this.p2p.currentState.playback.trackStableKey) {
+        this.p2p.control('SET_TRACK', { track })
+      }
+      this.p2p.control('PLAY')
+      return
+    }
     this.session?.notifyPlay()
   }
   pushPause(): void {
@@ -355,7 +362,14 @@ class ListenTogetherService {
     this.session?.notifyPause()
   }
   pushSeek(positionMs?: number): void {
-    if (this.p2p) { this.p2p.control('SEEK', { positionMs: positionMs ?? playerState.progress.nowPlayTime * 1000 }); return }
+    if (this.p2p) {
+      const track = createPlayerAdapter().currentTrack()
+      if (track && track.stableKey !== this.p2p.currentState.playback.trackStableKey) {
+        this.p2p.control('SET_TRACK', { track })
+      }
+      this.p2p.control('SEEK', { positionMs: positionMs ?? playerState.progress.nowPlayTime * 1000 })
+      return
+    }
     this.session?.notifySeek(positionMs)
   }
   pushTrack(): void {
