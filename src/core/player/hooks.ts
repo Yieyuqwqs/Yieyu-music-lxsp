@@ -1,3 +1,4 @@
+import { reportError } from '@/core/listen-together/errors'
 /**
  * 播放器钩子：给「一起听」这类扩展用，避免播放器核心反过来依赖房间逻辑。
  *
@@ -21,17 +22,17 @@ export const clearPlayerHooks = (): void => { hooks = {} }
 
 const safe = (fn?: () => void) => {
   if (!fn) return
-  try { fn() } catch (error) { /* 钩子出错不影响播放 */ }
+  try { fn() } catch (error) { reportError('player-hook', error) }
 }
 
 export const callOnPlay = (): void => safe(hooks.onPlay)
 export const callOnPause = (): void => safe(hooks.onPause)
 export const callOnSeek = (positionMs: number): void => {
-  if (hooks.onSeek) { try { hooks.onSeek(positionMs) } catch (error) { /* 忽略 */ } }
+  if (hooks.onSeek) { try { hooks.onSeek(positionMs) } catch (error) { reportError('player-hook:seek', error) } }
 }
 export const callOnTrackChange = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem | null): void => {
-  if (hooks.onTrackChange) { try { hooks.onTrackChange(musicInfo) } catch (error) { /* 忽略 */ } }
+  if (hooks.onTrackChange) { try { hooks.onTrackChange(musicInfo) } catch (error) { reportError('player-hook:track', error) } }
 }
 export const callOnResourceReady = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem | null): void => {
-  if (hooks.onResourceReady) { try { hooks.onResourceReady(musicInfo) } catch (error) { /* 忽略 */ } }
+  if (hooks.onResourceReady) { try { hooks.onResourceReady(musicInfo) } catch (error) { reportError('player-hook:resource', error) } }
 }
