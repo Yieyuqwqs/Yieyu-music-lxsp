@@ -129,10 +129,27 @@ export class P2PRoom {
     }, BROADCAST_MS)
   }
 
+  /** 紧凑状态：热路径上每次只发必要字段，少几十上百字节，中转更快 */
+  private compactState(): string {
+    return JSON.stringify({
+      t: 'S',
+      p: this.state.playback.positionMs,
+      a: this.state.playback.anchorServerMs,
+      i: this.state.playback.isPlaying ? 1 : 0,
+      k: this.state.playback.trackStableKey,
+      n: Date.now(),
+      ci: this.state.currentIndex,
+      m: this.state.playbackMode,
+      q: this.state.queue,
+      mb: this.state.members,
+      r: this.roomId,
+    })
+  }
+
   private broadcastState(): void {
     if (this.role !== 'host') return
-    const message: ServerMessage = { type: 'room_state_updated', state: this.state, serverNow: Date.now() }
-    this.mqtt.publish(topicOf(this.roomId), JSON.stringify(message))
+    // 用它压缩后的负载：字段短、体积小，热路径上省下序列化与中转时间
+    this.mqtt.publish(topicOf(this.roomId), this.compactState())
     this.options.onState?.(this.state, Date.now())
   }
 
@@ -248,7 +265,7 @@ export class P2PRoom {
   queueAdd(tracks: TrackRef[]): void {
     if (!tracks.length) return
     if (this.role === 'host') { this.control('QUEUE_ADD', { tracks }); return }
-    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'QUEUE_ADD', tracks, memberId: this.memberId, from: this.memberId }))
+    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ t: 'QA', q: tracks, f: this.memberId }))
   }
 
   /** 共享队列：删歌 */
@@ -278,7 +295,27 @@ export class P2PRoom {
     if (topic !== topicOf(this.roomId) || this.closed) return
     let message: Record<string, unknown> & { type?: string }
     try { message = JSON.parse(payload) } catch (error) { return }
-    if (!message?.type) return
+    if (!message) return
+
+    // 紧凑状态（t=S，房主热路径）：先处理，避免被下面的 type 判断挡掉
+    if (message.t === 'S' && this.role === 'guest') {
+      const state: RoomState = {
+        roomId: String(message.r ?? this.roomId),
+        playback: { positionMs: Number(message.p) || 0, anchorServerMs: Number(message.a) || 0, isPlaying: !!message.i, trackStableKey: (message.k as string) ?? null },
+        queue: (message.q as TrackRef[]) ?? [],
+        currentIndex: Number(message.ci ?? -1),
+        playbackMode: (message.m as PlaybackMode) ?? 'sequential',
+        members: (message.mb as RoomState['members']) ?? [],
+        settings: defaultSettings(),
+        updatedAt: Number(message.n) || Date.now(),
+      }
+      this.state = state
+      this.lastStateAt = Date.now()
+      this.options.onState?.(state, Number(message.n) || Date.now())
+      return
+    }
+
+    if (!message.type) return
 
     // 房主：谁发消息来，谁就是成员（p2p 没有服务端登记，只能靠这一手）
     if (this.role === 'host') {
@@ -315,6 +352,10 @@ export class P2PRoom {
     }
 
     // 房主：共享队列操作（任何成员都能加歌/删歌）
+    if (this.role === 'host' && message.t === 'QA') {
+      this.control('QUEUE_ADD', { tracks: (message.q as TrackRef[]) ?? [] })
+      return
+    }
     if (this.role === 'host' && (message.type === 'QUEUE_ADD' || message.type === 'QUEUE_REMOVE')) {
       this.control(message.type, message as never)
       return
