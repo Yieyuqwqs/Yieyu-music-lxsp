@@ -211,6 +211,27 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
       .readTimeout(20, TimeUnit.SECONDS)
       .build();
 
+  /** 单调时钟（纳秒）：一起听做对齐/时延计算用，不受系统校时影响 */
+  @ReactMethod
+  public void nowMonotonicNs(Promise promise) {
+    try {
+      promise.resolve((double) nativeMonotonicNs());
+    } catch (Throwable error) {
+      promise.reject("E_CLOCK", error);
+    }
+  }
+
+  @ReactMethod
+  public void nowEpochMs(Promise promise) {
+    try {
+      promise.resolve((double) nativeEpochMs());
+    } catch (Throwable error) {
+      promise.reject("E_CLOCK", error);
+    }
+  }
+
+  private static native long nativeMonotonicNs();
+  private static native long nativeEpochMs();
   @ReactMethod
   public void wasmLoad(String base64, Promise promise) {
     if (!LOADED) {
