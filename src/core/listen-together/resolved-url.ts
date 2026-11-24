@@ -17,38 +17,32 @@ const TTL_MS = 6 * 60 * 60 * 1000
 const entries = new Map<string, Entry>()
 let lastKey: string | null = null
 
-const keyOf = (info: { id?: string | null, source?: string } | null | undefined): string => {
-  if (!info) return ''
-  return `${info.source ?? ''}:${info.id ?? ''}`
-}
+const keyOf = (info: { id?: string | null, source?: string } | null | undefined): string => (
+  info ? `${info.source ?? ''}:${info.id ?? ''}` : ''
+)
 
 export const rememberResolvedUrl = (musicInfo: { id?: string | null, source?: string, interval?: string | null } | null | undefined, url: string): void => {
-  if (!musicInfo || !url || !/^https?:/i.test(url)) return
   const key = keyOf(musicInfo)
-  if (!key) return
-  const now = Date.now()
-  entries.set(key, { url, at: now, durationMs: parseInterval(musicInfo.interval) })
-  lastKey = key
-  if (entries.size > MAX) {
-    for (const [k, v] of entries) {
-      if (now - v.at > TTL_MS || entries.size > MAX) entries.delete(k)
-    }
-  }
+  const usable = musicInfo && url && /^https?:/i.test(url) && key
+  usable && (() => {
+    const now = Date.now()
+    entries.set(key, { url, at: now, durationMs: parseInterval(musicInfo.interval) })
+    lastKey = key
+    entries.size > MAX && [...entries].forEach(([k, v]) => {
+      ;(now - v.at > TTL_MS || entries.size > MAX) && entries.delete(k)
+    })
+  })()
 }
 
 export const getResolvedUrl = (source?: string, id?: string | null): string | null => {
   const entry = entries.get(`${source ?? ''}:${id ?? ''}`)
-  if (!entry) return null
-  if (Date.now() - entry.at > TTL_MS) return null
-  return entry.url
+  return !entry || Date.now() - entry.at > TTL_MS ? null : entry.url
 }
 
 /** 最近一条解析成功的直链（房主推送当前歌曲时兜底用） */
 export const getLastResolvedUrl = (): string | null => {
-  if (!lastKey) return null
-  const entry = entries.get(lastKey)
-  if (!entry || Date.now() - entry.at > TTL_MS) return null
-  return entry.url
+  const entry = lastKey ? entries.get(lastKey) : undefined
+  return !entry || Date.now() - entry.at > TTL_MS ? null : entry.url
 }
 
 export const clearResolvedUrls = (): void => {
@@ -57,10 +51,8 @@ export const clearResolvedUrls = (): void => {
 }
 
 const parseInterval = (interval?: string | null): number => {
-  if (!interval) return 0
-  const parts = interval.split(':').map(part => Number.parseInt(part, 10)).filter(part => Number.isFinite(part))
-  if (!parts.length) return 0
+  const parts = (interval ?? '').split(':').map(part => Number.parseInt(part, 10)).filter(part => Number.isFinite(part))
   let seconds = 0
   for (const part of parts) seconds = seconds * 60 + part
-  return seconds * 1000
+  return parts.length ? seconds * 1000 : 0
 }
