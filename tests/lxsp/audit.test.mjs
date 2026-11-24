@@ -87,6 +87,18 @@ export default (t) => {
     t.ok((room.match(/this\.transport = /g) || []).length <= 2, 'transport 只在一处赋值')
   })
 
+  t.suite('宪法：docs/constitution 十条拆分为独立文件且总表完整', () => {
+    const table = read('docs/constitution/README.md')
+    t.eq((table.match(/^\| \d+ \|/gm) || []).length, 10, '总表必须有 10 行')
+    const names = ['01-no-patching.md', '02-four-parts.md', '03-single-source-of-truth.md', '04-verify-references.md', '05-measured-performance.md', '06-fix-root-cause-only.md', '07-no-temporary-hacks.md', '08-honesty-first.md', '09-change-list.md', '10-no-dead-zone.md']
+    const missing = names.filter((name) => !existsSync(fileURLToPath(new URL(`../../docs/constitution/${name}`, import.meta.url))))
+    t.eq(missing, [], '缺失文件')
+    for (const name of names) {
+      const text = read(`docs/constitution/${name}`)
+      t.ok(text.includes('## 判定') || text.includes('## 判定'), `${name} 必须写清判定标准`)
+    }
+  })
+
   t.suite('审计：契约测试在位', () => {
     t.ok(existsSync(fileURLToPath(new URL('./contract-listen-together.test.mjs', import.meta.url))), '契约测试存在')
   })
