@@ -1,6 +1,18 @@
 #!/bin/sh
 # 自证脚本（宪法第十二条）：一条命令跑完全部本地可执行验证
 set -u
+
+# Node 版本门禁（环境不满足时明确"未测"，而不是抛 .ts 扩展名错误）
+NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
+NODE_MINOR=$(node -p 'process.versions.node.split(".")[1]')
+if [ "$NODE_MAJOR" -lt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -lt 6 ]; }; then
+  echo "Node 版本门禁"
+  echo "  当前: $(node -v)"
+  echo "  需要: >=22.6（.ts 直跑依赖 strip-types）"
+  echo "  结论: 未测（环境不满足）"
+  exit 2
+fi
+
 cd "$(dirname "$0")/.." || exit 1
 fail=0
 
