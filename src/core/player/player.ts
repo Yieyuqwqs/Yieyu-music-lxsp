@@ -1,5 +1,5 @@
 import { isInitialized, initial as playerInitial, isEmpty, setPause, setPlay, setResource, setStop, initTrackInfo, setVolume } from '@/plugins/player'
-import { callOnPause, callOnPlay, callOnSeek, callOnTrackChange } from './hooks'
+import { callOnPause, callOnPlay, callOnResourceReady, callOnSeek, callOnTrackChange } from './hooks'
 import { rememberResolvedUrl } from '@/core/listen-together/resolved-url'
 import { getCueWindow, setCueWindow } from '@/core/player/cueWindow'
 import {
@@ -157,6 +157,7 @@ export const setMusicUrl = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem
     } catch {}
     rememberResolvedUrl(musicInfo as never, url)
     setResource(musicInfo, url, seek)
+    callOnResourceReady(musicInfo)
   }).catch((err: any) => {
     console.log(err)
     setStatusText(err.message as string)
