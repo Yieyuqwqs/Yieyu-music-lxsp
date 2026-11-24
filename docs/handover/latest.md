@@ -1,6 +1,6 @@
 # 交接报告（自动生成）
 
-生成时间：2026-11-24T21:46:43.843Z
+生成时间：2026-11-24T21:49:34.418Z
 
 ## 声明与来源
 
@@ -10,6 +10,7 @@
 | 真实 LXSP 端点返回的直链可取到真实音频字节（206 audio/mpeg） | 实测 | node tools/device-sim.mjs |
 | 坏直链会被探针识别并回退，不会静默 00:00 | 实测 | node tools/device-sim.mjs |
 | 测试加载器支持 Node≥22.6 内置剥离与 @babel/core 双路径，无正则改 TS | 实测 | node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs |
+| 真机上 ExoPlayer 报出 duration>0（App 内 autocheck 写入 /sdcard 可能被分区存储拒绝，失败会经 reportError 上报） | 未接上 | node tools/read-autocheck.mjs |
 
 ## 分支审计
 
@@ -49,4 +50,10 @@ PASS  故障注入：坏直链被识别并回退  http=0 字节=0
 PASS  故障注入：坏直链不允许“装作在播”  duration=0 playing=false
 
 合计 5 项：5 PASS / 0 FAIL
+```
+
+## 自动核验读取
+
+```
+NOT-YET: /sdcard/lxsp-autocheck.json 还不存在（App 尚未产生记录）
 ```
