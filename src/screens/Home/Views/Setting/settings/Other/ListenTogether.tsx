@@ -185,6 +185,7 @@ const PanelContent = memo(() => {
               ))}
             <View style={styles.btnRow}>
               <Button onPress={() => listenTogether.addCurrentToQueue?.()}>把当前歌曲加入队列</Button>
+              <Button onPress={() => void listenTogether.runPlaybackSelfTest?.()}>播放自检</Button>
             </View>
           </View>
         )
