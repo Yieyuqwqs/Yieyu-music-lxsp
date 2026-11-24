@@ -410,6 +410,8 @@ class ListenTogetherService {
           interval: '',
           albumName: '',
           img: '',
+          types: this.placeholderTypes(),
+          _types: this.placeholderTypes(),
         })
         setPlayMusicInfo(null, info, true)
         const seekSeconds = Math.max(0, (this.p2p?.playheadMs() ?? 0) / 1000)
@@ -421,18 +423,25 @@ class ListenTogetherService {
 
       // 次优：房间给的 source:id 就是平台歌曲 ID，还原成在线曲目交给播放器
       if (track.source && track.id && track.source !== 'local') {
-        const info = toNewMusicInfo({
-          source: track.source,
-          name: track.name,
-          singer: track.singer,
-          songmid: track.id,
-          interval: '',
-          albumName: '',
-          img: '',
-        })
-        setMusicUrl(info as never)
-        this.update({ lastError: null, lastEvent: `已切到：${track.name} - ${track.singer}` })
-        return true
+        try {
+          const info = toNewMusicInfo({
+            source: track.source,
+            name: track.name,
+            singer: track.singer,
+            songmid: track.id,
+            interval: '',
+            albumName: '',
+            img: '',
+            types: this.placeholderTypes(),
+            _types: this.placeholderTypes(),
+          })
+          setMusicUrl(info as never)
+          this.update({ lastError: null, lastEvent: `已切到：${track.name} - ${track.singer}` })
+          return true
+        } catch (error) {
+          // 这种还原方式不被音源接受：继续往下走「本地列表 / 搜索」两条路
+          this.update({ lastEvent: `直连还原失败，改用本地查找：${track.name}` })
+        }
       }
       const listId = playerState.playMusicInfo.listId
       const list = listId ? (getList(listId) as Array<{ id?: string, source?: string, name?: string, singer?: string, meta?: { songId?: string } }>) : []
@@ -697,6 +706,14 @@ class ListenTogetherService {
         if (id.startsWith(this.PRELOAD_TRACK_PREFIX)) await TrackPlayer.remove(i)
       }
     } catch (error) { /* 忽略 */ }
+  }
+
+  /** 占位音质表：还原曲目时必须有，否则音源层读 qualitys.xxx 会抛异常 */
+  private placeholderTypes(): Record<string, { size: string, hash: string | null }> {
+    const keys = ['128k', '320k', 'flac', 'flac24bit', 'flac32bit', 'wav', 'ape', 'master', 'atmos']
+    const out: Record<string, { size: string, hash: string | null }> = {}
+    for (const key of keys) out[key] = { size: '', hash: null }
+    return out
   }
 
   /** 把某首歌加进共享队列 */
