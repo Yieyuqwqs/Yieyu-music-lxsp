@@ -80,6 +80,7 @@ export class P2PRoom {
       playbackMode: 'sequential',
       members: [{ memberId: this.memberId, role: this.role === 'host' ? 'CONTROLLER' : 'LISTENER', online: true, joinedAt: Date.now(), lastSeenAt: Date.now() }],
       settings: defaultSettings(),
+      version: 1,
       updatedAt: Date.now(),
     }
     this.mqtt = new MqttClient({
@@ -225,6 +226,7 @@ export class P2PRoom {
       q: this.state.queue,
       mb: this.state.members,
       r: this.roomId,
+      v: this.state.version,
     })
   }
 
@@ -234,6 +236,12 @@ export class P2PRoom {
     const payload = this.compactState()
     this.publishBoth(payload)
     this.options.onState?.(this.state, Date.now())
+  }
+
+  /** 任何状态变更都走这里，保证 version 单调递增 */
+  private bumpVersion(): void {
+    this.state.version = (this.state.version ?? 0) + 1
+    this.state.updatedAt = Date.now()
   }
 
   private applyControl(type: string, payload: Partial<TrackRef> & { positionMs?: number, mode?: PlaybackMode, track?: TrackRef, queue?: TrackRef[], currentIndex?: number, trackStableKey?: string }): boolean {
@@ -322,7 +330,7 @@ export class P2PRoom {
       default:
         return false
     }
-    this.state.updatedAt = serverNow
+    this.bumpVersion()
     return true
   }
 
@@ -393,11 +401,16 @@ export class P2PRoom {
     }
 
     if (message.t === 'S' && this.role === 'guest') {
+      // 不变量：只接受本房间、且版本更大的状态（双 broker 并行会带来乱序）
+      if (String(message.r ?? '') !== this.roomId) return
+      const incomingVersion = Number(message.v) || 0
+      if (incomingVersion <= (this.state.version ?? 0)) return
       const state: RoomState = {
         roomId: String(message.r ?? this.roomId),
         playback: { positionMs: Number(message.p) || 0, anchorServerMs: Number(message.a) || 0, isPlaying: !!message.i, trackStableKey: (message.k as string) ?? null },
         queue: (message.q as TrackRef[]) ?? [],
         currentIndex: Number(message.ci ?? -1),
+        version: incomingVersion,
         playbackMode: (message.m as PlaybackMode) ?? 'sequential',
         members: (message.mb as RoomState['members']) ?? [],
         settings: defaultSettings(),
@@ -521,6 +534,7 @@ export class P2PRoom {
       this.broadcastState()
       return
     }
+    this.bumpVersion()
     this.state.members = [...this.state.members, {
       memberId,
       role: 'LISTENER',
@@ -539,7 +553,7 @@ export class P2PRoom {
       const stale = member.lastSeenAt < cutoff
       if (stale && member.online) { member.online = false; changed = true }
     }
-    if (changed) this.broadcastState()
+    if (changed) { this.bumpVersion(); this.broadcastState() }
   }
 
   /** 成员发时钟探测（房主会回 np_pong） */
