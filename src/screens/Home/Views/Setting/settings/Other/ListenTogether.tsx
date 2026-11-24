@@ -67,6 +67,7 @@ export default memo(() => {
     <SubTitle title="一起听">
       <View style={styles.group}>
         <Text size={13}>{`状态：${status.connected ? '已连接' : '未连接'}${status.roomId ? `　房间：${status.roomId}` : ''}${status.role ? `　身份：${isController ? '控制端' : '成员'}` : ''}`}</Text>
+        {status.lastEvent ? <Text size={12} color={theme['c-500']} style={styles.hint}>{status.lastEvent}</Text> : null}
         {status.lastError ? <Text size={12} color={theme['c-500']} style={styles.hint}>{status.lastError}</Text> : null}
       </View>
 
