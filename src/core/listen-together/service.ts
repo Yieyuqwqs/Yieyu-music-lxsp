@@ -459,8 +459,8 @@ class ListenTogetherService {
           interval: '',
           albumName: '',
           img: '',
-          types: this.placeholderTypes(),
-          _types: this.placeholderTypes(),
+          types: {},
+          _types: {},
         })
         setPlayMusicInfo(null, info, true)
         setMusicUrl(info as never)
