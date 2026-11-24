@@ -532,7 +532,7 @@ class ListenTogetherService {
       try {
         const active = await TrackPlayer.getActiveTrack() as { url?: string } | undefined
         url = active?.url
-      } catch (error) { /* 取不到就不带直链，退回按 id 还原 */ }
+      } catch (error) { reportError('resolve:active-track', error) }
     }
     const track = url ? { ...base, url } : base
     if (this.p2p) this.p2p.control('SET_TRACK', { track })
@@ -628,7 +628,7 @@ class ListenTogetherService {
         const task = this.scheduled.get(commandId)
         if (!task) return
         this.scheduled.delete(commandId)
-        try { task() } catch (error) { /* 命令执行失败不影响房间 */ }
+        try { task() } catch (error) { reportError('schedule:run', error) }
       })
     }
     const ok = await scheduleNative(id, delayMs)
@@ -637,7 +637,7 @@ class ListenTogetherService {
         const task = this.scheduled.get(id)
         if (!task) return
         this.scheduled.delete(id)
-        try { task() } catch (error) { /* 忽略 */ }
+        try { task() } catch (error) { reportError('schedule:task', error) }
       }, Math.max(0, Math.round(delayMs)))
     }
   }
@@ -656,7 +656,7 @@ class ListenTogetherService {
     try {
       if (this.p2p) return this.p2p.playheadMs()
       if (this.client) return this.client.playheadMs()
-    } catch (error) { /* 出错就退回快照值，绝不让 UI 崩 */ }
+    } catch (error) { reportError('playhead', error) }
     return this.status.positionMs
   }
 
