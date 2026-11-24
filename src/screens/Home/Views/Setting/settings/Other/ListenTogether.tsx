@@ -6,6 +6,7 @@
  */
 import { memo, useCallback, useEffect, useState } from 'react'
 import { TextInput, View } from 'react-native'
+import Clipboard from '@react-native-clipboard/clipboard'
 
 import SubTitle from '../../components/SubTitle'
 import Button from '../../components/Button'
@@ -99,6 +100,14 @@ export default memo(() => {
           autoCorrect={false}
         />
       </View>
+
+      {inRoom
+        ? (
+          <View style={styles.btnRow}>
+            <Button onPress={() => Clipboard.setString(status.roomId ?? '')}>复制房号</Button>
+          </View>
+        )
+        : null}
 
       <View style={styles.btnRow}>
         <Button onPress={handleCreate} disabled={busy}>{busy ? '处理中…' : '创建房间（我是房主）'}</Button>
