@@ -1,127 +1,97 @@
 #!/usr/bin/env node
 /**
- * 一键部署到 Cloudflare Workers（不依赖 wrangler / npm）
+ * 一键部署到 Cloudflare Workers（用 curl 走网络：本机 node 的 DNS 解析器不可用，curl 可以）
  *
  * 用法：
  *   CF_API_TOKEN=xxx CF_ACCOUNT_ID=yyy node deploy.mjs
- *   （可选）SCRIPT_NAME=listening-room
  *
- * 做了什么：
- *   1. node build.mjs 把 src/*.ts 转成 dist/*.js
- *   2. PUT /accounts/{acc}/workers/scripts/{name}（multipart：metadata + 四个模块）
- *   3. 打开 workers.dev 子域
- *   4. 冒烟：建房 → 加入 → 取快照，打印可用的 API 地址
+ * 流程：build → 上传（metadata + 4 个 ESM 模块 + DO 绑定与迁移）→ 开 workers.dev → 冒烟（建房/加入/快照）
  */
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import https from 'node:https'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const TOKEN = process.env.CF_API_TOKEN
 const ACCOUNT = process.env.CF_ACCOUNT_ID
 const NAME = process.env.SCRIPT_NAME || 'listening-room'
 const COMPAT = process.env.COMPAT_DATE || '2026-01-01'
+const API = 'https://api.cloudflare.com/client/v4'
 
 if (!TOKEN || !ACCOUNT) {
-  console.log('需要环境变量：CF_API_TOKEN（Workers Scripts:Edit）与 CF_ACCOUNT_ID（32 位账号 ID）')
-  console.log('获取：Cloudflare Dashboard → My Profile → API Tokens → Create Token → 模板「Edit Cloudflare Workers」')
+  console.log('需要环境变量：CF_API_TOKEN 与 CF_ACCOUNT_ID')
   process.exit(1)
 }
 
-const call = (method, path, body, contentType) => new Promise((resolve, reject) => {
-  const payload = body
-  const req = https.request({
-    hostname: 'api.cloudflare.com',
-    path: `/client/v4${path}`,
-    method,
-    headers: Object.assign(
-      { Authorization: `Bearer ${TOKEN}`, 'User-Agent': 'dsh-agent' },
-      payload ? { 'Content-Type': contentType || 'application/json', 'Content-Length': payload.length } : {},
-    ),
-  }, res => {
-    const chunks = []
-    res.on('data', c => chunks.push(c))
-    res.on('end', () => {
-      const text = Buffer.concat(chunks).toString('utf8')
-      let json = null
-      try { json = text ? JSON.parse(text) : null } catch (error) { json = null }
-      if (res.statusCode >= 200 && res.statusCode < 300 && json?.success !== false) return resolve(json)
-      reject(new Error(`${method} ${path} → ${res.statusCode}: ${text.slice(0, 400)}`))
-    })
-  })
-  req.setTimeout(60000, () => req.destroy(new Error('timeout')))
-  req.on('error', reject)
-  if (payload) req.write(payload)
-  req.end()
-})
-
-const multipart = (parts) => {
-  const boundary = '----dsh' + Math.random().toString(16).slice(2)
-  const chunks = []
-  for (const part of parts) {
-    chunks.push(Buffer.from(`--${boundary}\r\n`))
-    if (part.filename) {
-      chunks.push(Buffer.from(`Content-Disposition: form-data; name="${part.name}"; filename="${part.filename}"\r\n`))
-      chunks.push(Buffer.from(`Content-Type: ${part.type || 'application/javascript+module'}\r\n\r\n`))
-    } else {
-      chunks.push(Buffer.from(`Content-Disposition: form-data; name="${part.name}"\r\n\r\n`))
-    }
-    chunks.push(Buffer.isBuffer(part.value) ? part.value : Buffer.from(String(part.value)))
-    chunks.push(Buffer.from('\r\n'))
+const curl = (args) => {
+  try {
+    return execFileSync('curl', ['-sS', '--max-time', '90', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  } catch (error) {
+    throw new Error(`curl 失败：${error.message}`)
   }
-  chunks.push(Buffer.from(`--${boundary}--\r\n`))
-  return { body: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` }
+}
+
+const parse = (text, what) => {
+  let json = null
+  try { json = JSON.parse(text) } catch (error) { json = null }
+  if (!json) throw new Error(`${what}：响应不是 JSON：${text.slice(0, 300)}`)
+  if (json.success === false) throw new Error(`${what}：${JSON.stringify(json.errors ?? json).slice(0, 400)}`)
+  return json
 }
 
 const main = async() => {
   console.log('[1/4] 构建 dist/*.js')
   execFileSync(process.execPath, [join(root, 'build.mjs')], { stdio: 'inherit' })
 
-  const modules = ['index.js', 'protocol.js', 'clock.js', 'room-do.js']
+  console.log('[2/4] 上传 Worker')
   const metadata = {
     main_module: 'index.js',
     compatibility_date: COMPAT,
-    bindings: [
-      { type: 'durable_object_namespace', name: 'ROOMS', class_name: 'ListeningRoomDO' },
-    ],
-    migrations: [{ tag: 'v1', new_sqlite_classes: ['ListeningRoomDO'] }],
+    bindings: [{ type: 'durable_object_namespace', name: 'ROOMS', class_name: 'ListeningRoomDO' }],
+    // Workers API 要的是「Actors 迁移对象」而不是数组
+    migrations: { new_tag: 'v1', steps: [{ new_sqlite_classes: ['ListeningRoomDO'] }] },
   }
-
-  console.log('[2/4] 上传 Worker')
-  const parts = [{ name: 'metadata', value: JSON.stringify(metadata), type: 'application/json' }]
-  for (const file of modules) {
-    parts.push({ name: file, filename: file, value: readFileSync(join(root, 'dist', file)) })
-  }
-  const form = multipart(parts)
-  await call('PUT', `/accounts/${ACCOUNT}/workers/scripts/${NAME}`, form.body, form.contentType)
+  const upload = curl([
+    '-X', 'PUT',
+    '-H', `Authorization: Bearer ${TOKEN}`,
+    '-F', `metadata=${JSON.stringify(metadata)};type=application/json`,
+    '-F', `index.js=@${join(root, 'dist/index.js')};type=application/javascript+module`,
+    '-F', `protocol.js=@${join(root, 'dist/protocol.js')};type=application/javascript+module`,
+    '-F', `clock.js=@${join(root, 'dist/clock.js')};type=application/javascript+module`,
+    '-F', `room-do.js=@${join(root, 'dist/room-do.js')};type=application/javascript+module`,
+    `${API}/accounts/${ACCOUNT}/workers/scripts/${NAME}`,
+  ])
+  parse(upload, '上传 Worker')
   console.log('      已上传')
 
   console.log('[3/4] 打开 workers.dev 子域')
-  await call('POST', `/accounts/${ACCOUNT}/workers/scripts/${NAME}/subdomain`, Buffer.from(JSON.stringify({ enabled: true, previews_enabled: false })))
-  const sub = await call('GET', `/accounts/${ACCOUNT}/workers/subdomain`)
+  const subdomainToggle = curl([
+    '-X', 'POST',
+    '-H', `Authorization: Bearer ${TOKEN}`,
+    '-H', 'Content-Type: application/json',
+    '--data', JSON.stringify({ enabled: true, previews_enabled: false }),
+    `${API}/accounts/${ACCOUNT}/workers/scripts/${NAME}/subdomain`,
+  ])
+  parse(subdomainToggle, '开启子域')
+
+  const sub = parse(curl(['-H', `Authorization: Bearer ${TOKEN}`, `${API}/accounts/${ACCOUNT}/workers/subdomain`]), '查询子域')
   const subdomain = sub?.result?.subdomain
   const baseUrl = subdomain ? `https://${NAME}.${subdomain}.workers.dev` : null
-  console.log('      ' + (baseUrl ?? '（拿不到子域，去 Dashboard 看一眼）'))
-
+  console.log('      ' + (baseUrl ?? '（拿不到子域，请去 Dashboard 看）'))
   if (!baseUrl) return
 
   console.log('[4/4] 冒烟：建房 → 加入 → 快照')
-  const created = await fetch(`${baseUrl}/api/rooms`, { method: 'POST' })
-  const createdJson = await created.json()
-  if (!createdJson?.ok) throw new Error('建房失败：' + JSON.stringify(createdJson).slice(0, 200))
-  const roomId = createdJson.data.roomId
-  const joined = await fetch(`${baseUrl}/api/rooms/${roomId}/join`, { method: 'POST' })
-  const joinedJson = await joined.json()
-  if (!joinedJson?.ok) throw new Error('加入失败：' + JSON.stringify(joinedJson).slice(0, 200))
-  const state = await fetch(`${baseUrl}/api/rooms/${roomId}/state`)
-  const stateJson = await state.json()
+  const created = parse(curl(['-X', 'POST', `${baseUrl}/api/rooms`]), '建房')
+  if (!created.ok) throw new Error('建房返回 ok=false：' + JSON.stringify(created).slice(0, 200))
+  const roomId = created.data.roomId
+  const joined = parse(curl(['-X', 'POST', `${baseUrl}/api/rooms/${roomId}/join`]), '加入')
+  const state = parse(curl([`${baseUrl}/api/rooms/${roomId}/state`]), '快照')
 
   console.log('\n部署完成 ✅')
   console.log('  地址：' + baseUrl)
-  console.log('  冒烟：roomId=' + roomId + ' role=' + joinedJson.data.role + ' 成员数=' + (stateJson?.data?.state?.members?.length ?? 0))
-  console.log('\n在 App 里：设置 → 一起听 → 服务器地址填 ' + baseUrl)
+  console.log('  冒烟：roomId=' + roomId + ' role=' + joined.data.role + ' 成员数=' + (state?.data?.state?.members?.length ?? 0) + ' anchor=' + JSON.stringify(state?.data?.state?.playback ?? {}))
+  console.log('\nApp 里：设置 → 一起听 → 服务器地址填 ' + baseUrl)
 }
 
 main().catch(error => {
