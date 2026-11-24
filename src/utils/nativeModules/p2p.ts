@@ -28,17 +28,37 @@ export interface DirectAddress {
   privateIp: string
 }
 
-/** 建立本地 UDP 端点并拿到公网映射 */
-export const directStart = async(stunHost = 'stun.l.google.com', stunPort = 19302, timeoutMs = 3000): Promise<DirectAddress | null> => {
+/**
+ * STUN 服务器优先级列表。
+ * 实测（本机网络）：stun.miwifi.com 可通 39–52ms；stun.l.google.com / stun.cloudflare.com 无响应（被拦）。
+ * 所以国内优先，google 只当最后兜底 —— 之前默认 google 是直连一直不生效的根因。
+ */
+const STUN_SERVERS: Array<[string, number]> = [
+  ['stun.miwifi.com', 3478],
+  ['stun.qq.com', 3478],
+  ['stun.chat.bilibili.com', 3478],
+  ['stun.l.google.com', 19302],
+]
+let preferredStunIndex = 0
+
+/** 建立本地 UDP 端点并拿到公网映射（自动在 STUN 列表里失败重试） */
+export const directStart = async(timeoutMs = 2500): Promise<DirectAddress | null> => {
   if (!native?.p2pStart) return null
-  try {
-    const mapped = await native.p2pStart(stunHost, stunPort, timeoutMs)
-    if (!mapped || mapped.startsWith('ERR:')) return null
-    const privateIp = (await native.p2pLocalIp?.()) ?? ''
-    return { mapped, privateIp }
-  } catch (error) {
-    return null
+  // 从上次成功的服务器开始试，失败就换下一个（环形遍历一次）
+  const count = STUN_SERVERS.length
+  for (let attempt = 0; attempt < count; attempt++) {
+    const index = (preferredStunIndex + attempt) % count
+    const [host, port] = STUN_SERVERS[index]
+    try {
+      const mapped = await native.p2pStart(host, port, timeoutMs)
+      if (mapped && !mapped.startsWith('ERR:')) {
+        preferredStunIndex = index
+        const privateIp = (await native.p2pLocalIp?.()) ?? ''
+        return { mapped, privateIp }
+      }
+    } catch (error) { /* 换下一个 */ }
   }
+  return null
 }
 
 /** 打洞 + 指定对端 */
