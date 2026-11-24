@@ -44,9 +44,9 @@ export const driftMs = (playback: PlaybackState, deviceNow: number, sync: ClockS
 export const LEAD_MS = 400
 
 /** 播放/恢复：锚点前置 400ms */
-export const anchorForPlay = (playback: PlaybackState, serverNow: number): PlaybackState => ({
+export const anchorForPlay = (playback: PlaybackState, serverNow: number, leadMs: number = LEAD_MS): PlaybackState => ({
   ...playback,
-  anchorServerMs: serverNow + LEAD_MS,
+  anchorServerMs: serverNow + leadMs,
   isPlaying: true,
 })
 
@@ -59,16 +59,16 @@ export const anchorForPause = (playback: PlaybackState, serverNow: number): Play
 })
 
 /** 拖动 */
-export const anchorForSeek = (playback: PlaybackState, serverNow: number, positionMs: number): PlaybackState => ({
+export const anchorForSeek = (playback: PlaybackState, serverNow: number, positionMs: number, leadMs: number = LEAD_MS): PlaybackState => ({
   ...playback,
   positionMs: Math.max(0, Math.floor(positionMs)),
-  anchorServerMs: playback.isPlaying ? serverNow + LEAD_MS : serverNow,
+  anchorServerMs: playback.isPlaying ? serverNow + leadMs : serverNow,
 })
 
 /** 换曲：位置归零并开播 */
-export const anchorForSetTrack = (playback: PlaybackState, serverNow: number, stableKey: string): PlaybackState => ({
+export const anchorForSetTrack = (playback: PlaybackState, serverNow: number, stableKey: string, leadMs: number = LEAD_MS): PlaybackState => ({
   positionMs: 0,
-  anchorServerMs: serverNow + LEAD_MS,
+  anchorServerMs: serverNow + leadMs,
   isPlaying: true,
   trackStableKey: stableKey,
 })
