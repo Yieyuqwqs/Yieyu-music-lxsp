@@ -21,7 +21,7 @@ import { join, relative } from 'node:path'
 
 const ROOTS = ['src/core/listen-together', 'src/utils/nativeModules']
 // 只看本项目负责的模块；btAudio/downloadService 是原有代码，不在本次范围
-const ONLY = /(listen-together|nativeModules\/(p2p|syncEngine|clockrt))\.ts$/
+const ONLY = /(src\/core\/listen-together\/[^/]+\.ts|nativeModules\/(p2p|syncEngine|clockrt)\.ts|core\/player\/hooks\.ts)$/
 const FILES_EXTRA = ['src/core/player/hooks.ts']
 const BANNED = [
   { name: '空 catch（吞异常）', re: /catch\s*(\([^)]*\))?\s*\{\s*\}/ },
