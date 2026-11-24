@@ -72,3 +72,44 @@ export const anchorForSetTrack = (playback: PlaybackState, serverNow: number, st
   isPlaying: true,
   trackStableKey: stableKey,
 })
+
+
+/**
+ * 严谨版播放头：完全用单调时钟增量，不用跨设备的 epoch 差
+ *
+ * 快照 = 某次收到 room_state_updated 时的三元组：
+ *   positionMs / anchorServerMs / serverNow（都来自同一条消息，天然同源）
+ * 之后就靠单调时钟算「过了多久」：
+ *   elapsed = (anchorServerMs <= serverNow ? serverNow - anchorServerMs : 0) + (monoNow - monoAtReceive)
+ * 播放头 = positionMs + max(0, elapsed)   （仅 isPlaying）
+ *
+ * 好处：不依赖两台手机的系统时间是否一致，也不会被校时/改时间影响。
+ */
+export interface PlaybackSnapshot {
+  positionMs: number
+  anchorServerMs: number
+  isPlaying: boolean
+  serverNow: number
+  monoAtReceive: number
+}
+
+export const snapshotOf = (playback: PlaybackState, serverNow: number, monoAtReceive: number): PlaybackSnapshot => ({
+  positionMs: Math.max(0, playback.positionMs),
+  anchorServerMs: playback.anchorServerMs,
+  isPlaying: playback.isPlaying,
+  serverNow,
+  monoAtReceive,
+})
+
+/** 距离「锚点真正生效」还有多少毫秒（>=0：还要等；<0：已经开播了） */
+export const leadRemainingMs = (snapshot: PlaybackSnapshot, monoNow: number): number => {
+  const anchorAtReceive = snapshot.anchorServerMs - snapshot.serverNow // 锚点相对接收时刻的偏移
+  const anchorMono = snapshot.monoAtReceive + anchorAtReceive
+  return anchorMono - monoNow
+}
+
+export const playheadFromSnapshot = (snapshot: PlaybackSnapshot, monoNow: number): number => {
+  if (!snapshot.isPlaying) return snapshot.positionMs
+  const elapsed = (monoNow - snapshot.monoAtReceive) - (snapshot.anchorServerMs - snapshot.serverNow)
+  return Math.max(0, snapshot.positionMs + Math.max(0, elapsed))
+}
