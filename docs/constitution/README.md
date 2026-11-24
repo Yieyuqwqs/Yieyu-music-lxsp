@@ -16,6 +16,7 @@
 | 10 | CI 必须解析到每个模块 | 禁止覆盖死区、禁止正则批量改 | [10-no-dead-zone.md](./10-no-dead-zone.md) | modules.test.mjs |
 | 11 | 严禁温室测试 | Mock 不算通过；要真链路/真数据/真日志 | [11-no-greenhouse-testing.md](./11-no-greenhouse-testing.md) | live.test.mjs + 豁免标注 |
 | 12 | 禁止把锅甩给人类 | 不许要求用户验证；每轮自带验证输出 | [12-no-blame-shifting.md](./12-no-blame-shifting.md) | self-verify.sh + audit |
+| 13 | 自检条款 | 前十二条任一触犯即交付失败 | [13-self-audit.md](./13-self-audit.md) | constitution-audit.mjs |
 
 ## 执行顺序（每次改动）
 
