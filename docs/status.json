@@ -33,6 +33,14 @@
       "evidence": [
         "node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs"
       ]
+    },
+    {
+      "id": "device-duration-observed",
+      "claim": "真机上 ExoPlayer 报出 duration>0（App 内 autocheck 写入 /sdcard 可能被分区存储拒绝，失败会经 reportError 上报）",
+      "source": "未接上",
+      "evidence": [
+        "node tools/read-autocheck.mjs"
+      ]
     }
   ]
 }
