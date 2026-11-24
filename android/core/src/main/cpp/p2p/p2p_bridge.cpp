@@ -78,7 +78,7 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_cn_toside_music_core_CoreModule_nativeP2PStats(JNIEnv* env, jclass) {
   const lxp2p::PeerStats stats = g_peer.stats();
   std::string text = "sent=" + std::to_string(stats.sent) + " recv=" + std::to_string(stats.received) +
-                     " drop=" + std::to_string(stats.dropped) + " connected=" + (stats.connected ? "1" : "0") +
+                     " drop=" + std::to_string(stats.dropped) + " ka=" + std::to_string(stats.keepalives) + " connected=" + (stats.connected ? "1" : "0") +
                      " remote=" + stats.remote;
   return to_java(env, text);
 }
