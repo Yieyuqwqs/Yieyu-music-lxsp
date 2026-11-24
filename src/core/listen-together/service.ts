@@ -53,6 +53,7 @@ const createPlayerAdapter = (): PlayerAdapter => ({
 
 class ListenTogetherService {
   private client: ListenTogetherClient | null = null
+  private clientBaseUrl = ''
   private session: RoomSession | null = null
   private status: RoomStatus = {
     connected: false, roomId: null, role: null, memberId: null,
@@ -85,8 +86,18 @@ class ListenTogetherService {
   }
 
   private ensureClient(): ListenTogetherClient {
-    if (this.client) return this.client
-    const client = new ListenTogetherClient({ baseUrl: this.serverUrl() })
+    const baseUrl = this.serverUrl()
+    if (this.client && this.clientBaseUrl === baseUrl) return this.client
+    if (this.client) {
+      // 地址变了：断开旧连接，重建
+      this.session?.stop()
+      this.session = null
+      this.client.disconnect()
+      this.client = null
+      this.update({ connected: false })
+    }
+    this.clientBaseUrl = baseUrl
+    const client = new ListenTogetherClient({ baseUrl })
     client.on((event) => {
       if (event.type === 'open') this.update({ connected: true, lastError: null })
       else if (event.type === 'close') this.update({ connected: false })
