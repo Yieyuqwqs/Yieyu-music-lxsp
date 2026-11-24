@@ -126,6 +126,13 @@ export default (t) => {
     t.ok(report.includes('全绿') || report.includes('PASS'), '必须含可验证结果')
   })
 
+  t.suite('审计：禁止周期性 applyState（会与本地播放互相拉扯→秒跳）', () => {
+    const room = read('src/core/listen-together/room.ts')
+    t.ok(!/setInterval\([\s\S]{0,120}applyState/.test(room), '不得用 setInterval 周期性对齐')
+    t.ok(!room.includes('enforceTimer'), '不得有强制对齐计时器')
+    t.ok(room.includes('this.client.on('), '对齐只能事件驱动')
+  })
+
   t.suite('审计：契约测试在位', () => {
     t.ok(existsSync(fileURLToPath(new URL('./contract-listen-together.test.mjs', import.meta.url))), '契约测试存在')
   })
