@@ -94,7 +94,14 @@ class ListenTogetherService {
   }
 
   getStatus(): RoomStatus {
-    return { ...this.status, members: [...this.status.members] }
+    // 每次取状态都实时探测原生能力（布尔判断，零成本），不再依赖“有没有人记得调 probeEngine”
+    const directNow = isDirectNativeAvailable()
+    const syncNow = isSyncEngineAvailable()
+    return {
+      ...this.status,
+      members: [...this.status.members],
+      engine: { direct: directNow, sync: syncNow, nativeClock: directNow || syncNow },
+    }
   }
 
   subscribe(handler: (status: RoomStatus) => void): () => void {
