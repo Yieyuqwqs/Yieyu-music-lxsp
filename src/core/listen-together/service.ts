@@ -7,7 +7,7 @@
 import playerState from '@/store/player/state'
 import settingState from '@/store/setting/state'
 import { play, pause } from '@/core/player/player'
-import { setCurrentTime, setResource, setPlay, setPlaybackRate } from '@/plugins/player/utils'
+import { setCurrentTime, setPlaybackRate } from '@/plugins/player/utils'
 import { setPlayMusicInfo } from '@/core/player/playInfo'
 import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
@@ -436,7 +436,10 @@ class ListenTogetherService {
     await this.clearPreloads()
     try {
       this.update({ lastEvent: `收到切歌：${track.name} - ${track.singer}（${track.stableKey}）` })
-      // 最优：房主已经把直链解析好了，直接放它（不依赖搜索、不依赖两端 id 一致）
+      // 结构：房间直链只作为「缓存提示」，播放一律走 App 自己的 setMusicUrl 管线。
+      // 根因：之前手工 setPlayMusicInfo + setResource + setPlay 绕过了 App 的解析/校验/UA/降级链路，
+      //   一旦这条直链在对方网络不可取（防盗链/签名过期），ExoPlayer 加载失败，
+      //   表现就是主界面 00:00/00:00 无法播放，而房间状态已经推进（图一 00:25、图二 00:00）。
       if (track.url && /^https?:\/\//i.test(track.url)) {
         const info = toNewMusicInfo({
           source: track.source,
@@ -449,11 +452,10 @@ class ListenTogetherService {
           types: this.placeholderTypes(),
           _types: this.placeholderTypes(),
         })
+        rememberResolvedUrl(info as never, track.url)
         setPlayMusicInfo(null, info, true)
-        const seekSeconds = Math.max(0, (this.p2p?.playheadMs() ?? 0) / 1000)
-        setResource(info as never, track.url, seekSeconds)
-        void setPlay()
-        this.update({ lastError: null, lastEvent: `用房间直链播放：${track.name}` })
+        setMusicUrl(info as never)
+        this.update({ lastError: null, lastEvent: `按房间直链播放：${track.name}` })
         return true
       }
 
