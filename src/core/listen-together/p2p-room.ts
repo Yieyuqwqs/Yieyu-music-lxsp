@@ -44,6 +44,8 @@ export class P2PRoom {
   private lastStateAt = 0
   private clockSync: ClockSync = emptyClockSync()
   private lastPingAt = 0
+  /** 最近一次别人分享的直链，本机解析失败时可直接用 */
+  private lastSharedUrl: { key: string, url: string } | null = null
   private closed = false
 
   constructor(options: P2PRoomOptions) {
@@ -74,6 +76,7 @@ export class P2PRoom {
           // 成员：先把时钟校准起来，再持续采样（公共 broker 的往返也算进去）
           this.pingClock()
           this.pingClock()
+          this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'SYNC_REQUEST', from: this.memberId }))
           if (!this.clockTimer) {
             this.clockTimer = setInterval(() => this.pingClock(), 8_000)
           }
@@ -230,6 +233,17 @@ export class P2PRoom {
 
   // ---------------------------------------------------------- 成员：请求
 
+  /** 抢一次完整状态（新加入、怀疑丢包时调） */
+  requestState(): void {
+    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'SYNC_REQUEST', from: this.memberId }))
+  }
+
+  /** 把解析好的直链分享给房间（谁解析出来都行） */
+  shareUrl(stableKey: string, url: string): void {
+    if (!stableKey || !/^https?:\/\//i.test(url)) return
+    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'URL_SHARE', stableKey, url, from: this.memberId }))
+  }
+
   /** 共享队列：加歌（成员发消息，房主落状态） */
   queueAdd(tracks: TrackRef[]): void {
     if (!tracks.length) return
@@ -276,6 +290,26 @@ export class P2PRoom {
     if (message.type === 'np_ping') {
       if (this.role === 'host') {
         this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'np_pong', clientNow: message.clientNow, serverNow: Date.now(), to: message.from }))
+      }
+      return
+    }
+
+    // 任何人都能要状态：房主立刻回一份完整快照（新加入、丢包都能靠这一手自愈）
+    if (message.type === 'SYNC_REQUEST') {
+      if (this.role === 'host') this.broadcastState()
+      return
+    }
+
+    // 任何人解析出直链都可以分享，其他人直接复用（P2P 的意义就在这）
+    if (message.type === 'URL_SHARE') {
+      const key = String(message.stableKey ?? '')
+      const url = String(message.url ?? '')
+      if (key && /^https?:\/\//i.test(url)) {
+        const index = this.state.queue.findIndex(item => item.stableKey === key)
+        if (index >= 0) this.state.queue[index] = { ...this.state.queue[index], url }
+        if (this.state.playback.trackStableKey === key) this.state.playback = { ...this.state.playback }
+        this.lastSharedUrl = { key, url }
+        if (this.role === 'host') this.broadcastState()
       }
       return
     }
@@ -361,6 +395,11 @@ export class P2PRoom {
     if (this.role === 'host') return
     this.lastPingAt = Date.now()
     this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'np_ping', clientNow: this.lastPingAt, from: this.memberId }))
+  }
+
+  /** 房间里别人分享过的直链（本机解析不出来时用） */
+  get sharedUrl(): { key: string, url: string } | null {
+    return this.lastSharedUrl
   }
 
   get clock(): ClockSync {
