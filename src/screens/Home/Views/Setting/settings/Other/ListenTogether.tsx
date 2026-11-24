@@ -71,12 +71,15 @@ export default memo(() => {
 
       <View style={styles.group}>
         <Text size={13} color={theme['c-font-label']}>服务器地址</Text>
+        <Text size={12} color={theme['c-500']} style={styles.hint}>
+          填 p2p 就是「免部署」模式：不建服务器、不要域名，直接走公共消息通道（推荐）。两边填同一个房号即可。
+        </Text>
         <TextInput
           style={{ ...styles.input, color: theme['c-font'], borderColor: theme['c-350'] }}
           value={server}
           onChangeText={setServer}
           onBlur={handleSaveServer}
-          placeholder="https://listening-room.xxx.workers.dev"
+          placeholder="p2p（免部署） 或 https://你的服务器"
           placeholderTextColor={theme['c-450']}
           autoCapitalize="none"
           autoCorrect={false}
@@ -90,7 +93,7 @@ export default memo(() => {
           style={{ ...styles.input, color: theme['c-font'], borderColor: theme['c-350'] }}
           value={roomDraft}
           onChangeText={setRoomDraft}
-          placeholder="创建后自动填入，或粘贴好友的房号"
+          placeholder="房主点创建后自动生成，成员粘贴同一个房号"
           placeholderTextColor={theme['c-450']}
           autoCapitalize="none"
           autoCorrect={false}
@@ -98,8 +101,8 @@ export default memo(() => {
       </View>
 
       <View style={styles.btnRow}>
-        <Button onPress={handleCreate} disabled={busy}>{busy ? '处理中…' : '创建房间'}</Button>
-        <Button onPress={handleJoin} disabled={busy || !roomDraft.trim()}>加入房间</Button>
+        <Button onPress={handleCreate} disabled={busy}>{busy ? '处理中…' : '创建房间（我是房主）'}</Button>
+        <Button onPress={handleJoin} disabled={busy || !roomDraft.trim()}>加入房间（我是成员）</Button>
         <Button onPress={handleLeave} disabled={busy || !inRoom}>离开</Button>
       </View>
 
