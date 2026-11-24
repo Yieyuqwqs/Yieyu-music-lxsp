@@ -40,6 +40,8 @@ export class P2PRoom {
   private state: RoomState
   private broadcastTimer: ReturnType<typeof setInterval> | null = null
   private clockTimer: ReturnType<typeof setInterval> | null = null
+  private watchdogTimer: ReturnType<typeof setInterval> | null = null
+  private lastStateAt = 0
   private clockSync: ClockSync = emptyClockSync()
   private lastPingAt = 0
   private closed = false
@@ -75,6 +77,17 @@ export class P2PRoom {
           if (!this.clockTimer) {
             this.clockTimer = setInterval(() => this.pingClock(), 8_000)
           }
+          // 房主每 10 秒会广播一次；25 秒没收到就认为房间没了
+          this.lastStateAt = Date.now()
+          if (!this.watchdogTimer) {
+            this.watchdogTimer = setInterval(() => {
+              if (this.closed || this.role !== 'guest') return
+              if (Date.now() - this.lastStateAt > 25_000) {
+                this.options.onDisconnected?.()
+                this.options.onError?.('房主已断开（25 秒没收到房间状态），房间结束了')
+              }
+            }, 5_000)
+          }
         }
       },
       onClose: () => this.options.onDisconnected?.(),
@@ -93,6 +106,8 @@ export class P2PRoom {
     this.broadcastTimer = null
     if (this.clockTimer) clearInterval(this.clockTimer)
     this.clockTimer = null
+    if (this.watchdogTimer) clearInterval(this.watchdogTimer)
+    this.watchdogTimer = null
     this.mqtt.close()
   }
 
@@ -246,6 +261,7 @@ export class P2PRoom {
     if (message.type === 'room_state_updated' && this.role === 'guest') {
       const state = message.state as RoomState
       if (!state?.playback) return
+      this.lastStateAt = Date.now()
       this.state = state
       this.options.onState?.(state, Number(message.serverNow) || Date.now())
       return
