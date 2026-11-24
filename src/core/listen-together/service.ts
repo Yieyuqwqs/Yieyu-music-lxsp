@@ -322,9 +322,15 @@ class ListenTogetherService {
       onPause: () => this.pushPause(),
       onSeek: (positionMs) => this.pushSeek(positionMs),
       onTrackChange: (musicInfo) => {
-        // 控制端换曲：等播放器把直链装好再同步（ensure 直链能带过去）
-        if (!this.client?.isController && !this.p2p) return
-        setTimeout(() => { void this.pushTrackWithUrl() }, 600)
+        // 只有房主才往房间推；成员端的换歌是「被动的」，推回去会打架
+        if (!this.isHost()) return
+        // 直链可能还没好，先占位推一次（不带链接），等 onResourceReady 再补带链接的一次
+        setTimeout(() => { if (this.isHost()) void this.pushTrackWithUrl() }, 250)
+      },
+      onResourceReady: () => {
+        // 直链已经落地：立刻把「歌 + 直链」推给房间，这才是丝滑的关键一步
+        if (!this.isHost()) return
+        void this.pushTrackWithUrl()
       },
     })
   }
@@ -475,6 +481,12 @@ class ListenTogetherService {
   /** 房间播放头（毫秒）：p2p/http 各自算，UI 每秒取一次 */
 
   /** 把当前正在播的歌加进共享队列（谁都能加） */
+  /** 我是房主吗（p2p 看角色，http 看客户端身份） */
+  private isHost(): boolean {
+    if (this.p2p) return this.p2p.role === 'host'
+    return this.client?.isController ?? false
+  }
+
   /** 房间播放头（毫秒）：p2p 用房间时钟、http 用客户端时钟，UI 每秒取一次 */
   playheadMs(): number {
     try {
