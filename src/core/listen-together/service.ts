@@ -13,7 +13,7 @@ import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
 import { P2PRoom, makeRoomId } from './p2p-room'
 import { monotonicMs, primeClock } from '@/utils/nativeModules/clockrt'
-import { cancelNative, pushAnchor, scheduleNative, startSyncPump, syncClear, syncPlayheadMs } from '@/utils/nativeModules/syncEngine'
+import { cancelNative, pushAnchor, scheduleNative, startSyncPump, syncClear, syncPlayheadMs, isSyncEngineAvailable } from '@/utils/nativeModules/syncEngine'
 import { playheadAt } from './playhead'
 import { getResolvedUrl, getLastResolvedUrl, rememberResolvedUrl } from './resolved-url'
 import { getMusicUrl } from '@/core/music'
@@ -42,6 +42,8 @@ export interface RoomStatus {
   lastEvent: string | null
   /** 房间当前歌曲的实时状态（UI 每秒取一次 playheadMs 显示） */
   nowPlaying: { name: string, singer: string, stableKey: string, isPlaying: boolean } | null
+  /** 原生引擎能力（C++ 直连 / C++ 同步引擎是否真的装进了这个 APK） */
+  engine: { direct: boolean, sync: boolean, nativeClock: boolean }
   /** 直连通道状态（UDP 打洞成功后控制消息走它） */
   direct: { up: boolean, local: string | null, remote: string | null }
   /** 共享队列（房间里的，不是本地列表） */
@@ -80,8 +82,16 @@ class ListenTogetherService {
     members: [], isPlaying: false, positionMs: 0, state: null, lastError: null, lastEvent: null,
     queue: [], currentIndex: -1, nowPlaying: null,
     direct: { up: false, local: null, remote: null },
+    engine: { direct: false, sync: false, nativeClock: false },
   }
   private listeners = new Set<(status: RoomStatus) => void>()
+
+  /** 探测原生能力（App 启动时调一次即可） */
+  probeEngine(): void {
+    const direct = isDirectNativeAvailable()
+    const sync = isSyncEngineAvailable()
+    this.update({ engine: { direct, sync, nativeClock: direct || sync } })
+  }
 
   getStatus(): RoomStatus {
     return { ...this.status, members: [...this.status.members] }
