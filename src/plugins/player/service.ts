@@ -10,7 +10,6 @@ import { getCurrentTrackId } from './playList'
 import { getCueWindow } from '@/core/player/cueWindow'
 import { pause, play, playNext, playPrev } from '@/core/player/player'
 import { refreshDuration } from '@/core/init/player/playProgress'
-import { scheduleAutocheck } from '@/core/listen-together/autocheck'
 
 let isInitialized = false
 
@@ -99,8 +98,6 @@ const registerPlaybackService = async() => {
       case TPState.Ready:
         // 原生 Ready：ExoPlayer 已 prepared，此刻读 duration 才是可信的（不再靠计时器猜）
         refreshDuration()
-        // 自动核验：3 秒后把 duration 结果写进 /sdcard/lxsp-autocheck.json（不需要人看日志）
-        scheduleAutocheck('playback-ready')
         global.app_event.playerPause()
         global.app_event.pause()
         break
