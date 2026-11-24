@@ -13,6 +13,7 @@ import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
 import { P2PRoom, makeRoomId } from './p2p-room'
 import { monotonicMs, primeClock } from '@/utils/nativeModules/clockrt'
+import { isDirectAvailable } from '@/utils/nativeModules/p2p'
 import { cancelNative, pushAnchor, scheduleNative, startSyncPump, syncClear, syncPlayheadMs, isSyncEngineAvailable } from '@/utils/nativeModules/syncEngine'
 import { playheadAt } from './playhead'
 import { getResolvedUrl, getLastResolvedUrl, rememberResolvedUrl } from './resolved-url'
@@ -88,14 +89,14 @@ class ListenTogetherService {
 
   /** 探测原生能力（App 启动时调一次即可） */
   probeEngine(): void {
-    const direct = isDirectNativeAvailable()
+    const direct = isDirectAvailable()
     const sync = isSyncEngineAvailable()
     this.update({ engine: { direct, sync, nativeClock: direct || sync } })
   }
 
   getStatus(): RoomStatus {
     // 每次取状态都实时探测原生能力（布尔判断，零成本），不再依赖“有没有人记得调 probeEngine”
-    const directNow = isDirectNativeAvailable()
+    const directNow = isDirectAvailable()
     const syncNow = isSyncEngineAvailable()
     return {
       ...this.status,
