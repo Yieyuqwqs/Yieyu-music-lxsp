@@ -17,6 +17,10 @@ add_library(yieyu_core SHARED
     ${SQLITE_DIR}/sqlite3.c
     wasm/wasm_runtime.cpp
     clock/clock_bridge.cpp
+    p2p/p2p_wire.cpp
+    p2p/p2p_stun.cpp
+    p2p/p2p_peer.cpp
+    p2p/p2p_bridge.cpp
     ${WASM3_DIR}/m3_core.c
     ${WASM3_DIR}/m3_env.c
     ${WASM3_DIR}/m3_parse.c
