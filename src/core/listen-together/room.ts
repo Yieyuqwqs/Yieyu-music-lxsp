@@ -93,7 +93,14 @@ export class RoomSession {
   applyState(state: RoomState): RoomSessionEvent[] {
     this.lastState = state
     const events: RoomSessionEvent[] = []
-    if (this.client.isController) return events // 控制端以本地为准，不被自己的广播反向扯动
+    // 控制端以本地为准
+    if (this.client.isController) return events
+
+    // 结构：只在「房间状态版本真的变了」时应用一次。
+    // 广播每 3 秒重复一次同版本状态，若每次都执行 track/play/pause/seek，
+    // 就会和本地播放器互相拉扯——这正是「每秒被拽回」的根因。
+    if (this.lastAppliedVersion != null && state.version === this.lastAppliedVersion) return events
+    this.lastAppliedVersion = state.version
 
     const remoteTrackKey = state.playback.trackStableKey
     if (remoteTrackKey !== this.lastRemoteTrackKey) {
@@ -117,26 +124,8 @@ export class RoomSession {
       this.emit(event)
     }
 
-    // 漂移修正（行业通行做法）：
-    //   < 50ms 不动 ｜ 50-300ms 改播放速率慢慢追 ｜ > 300ms 直接 seek
-    const target = this.client.playheadMs()
-    const current = this.player.positionMs()
-    if (target > 0) {
-      const drift = target - current
-      const abs = Math.abs(drift)
-      if (abs > this.driftThresholdMs) {
-        this.applyingRemote = true
-        this.player.seek(target)
-        this.applyingRemote = false
-        this.emitAndPush(events, { type: 'applied', action: 'seek', positionMs: target })
-      } else if (abs > 100 && this.player.setRate && state.playback.isPlaying) {
-        this.applyingRemote = true
-        // 落后就略快、超前就略慢，追上后恢复 1.0
-        this.player.setRate(drift > 0 ? 1.06 : 0.94)
-        this.applyingRemote = false
-        setTimeout(() => { this.player.setRate?.(1) }, 1200)
-      }
-    }
+    // 位置对齐只发生在「换歌起播」那一刻（startTrackAt / scheduleMemberStart），
+    // 这里不再做任何 seek 或调速——避免周期性把用户拽回房间位置。
     return events
   }
 
