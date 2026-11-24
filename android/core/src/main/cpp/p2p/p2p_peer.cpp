@@ -58,6 +58,7 @@ bool UdpPeer::start(const char* stun_host, uint16_t stun_port, int timeout_ms, s
   int tos = 0xB8;
   ::setsockopt(fd_, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
   running_.store(true);
+  keepalive_thread_ = std::thread([this]() { this->keepalive_loop(); });
   thread_ = std::thread([this]() {
     // 接收线程优先：抖动越小，对齐越稳
     ::setpriority(PRIO_PROCESS, static_cast<id_t>(::gettid()), -10);
@@ -92,6 +93,22 @@ void UdpPeer::punch_once() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (!has_remote_ || fd_ < 0) return;
   ::sendto(fd_, buffer, length, 0, reinterpret_cast<struct sockaddr*>(&remote_), sizeof(struct sockaddr_in));
+}
+
+void UdpPeer::keepalive_loop() {
+  // NAT 保活：每 3 秒一个空包。比让 JS 定时器来做更准（JS 会被主线程卡住）
+  while (running_.load()) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (has_remote_ && fd_ >= 0) {
+        uint8_t buffer[kHeaderSize];
+        const size_t length = encode_packet(buffer, sizeof(buffer), seq_.fetch_add(1), kFlagKeepalive, nullptr, 0);
+        ::sendto(fd_, buffer, length, 0, reinterpret_cast<struct sockaddr*>(&remote_), sizeof(struct sockaddr_in));
+        stats_.keepalives += 1;
+      }
+    }
+    for (int i = 0; i < 30 && running_.load(); i++) ::usleep(100 * 1000);
+  }
 }
 
 void UdpPeer::recv_loop() {
@@ -159,6 +176,7 @@ size_t UdpPeer::poll(uint8_t* out, size_t cap, int timeout_ms) {
 
 void UdpPeer::stop() {
   running_.store(false);
+  if (keepalive_thread_.joinable()) keepalive_thread_.join();
   if (thread_.joinable()) thread_.join();
   if (fd_ >= 0) {
     ::close(fd_);
