@@ -13,7 +13,25 @@ interface MusicInfoLike {
   source?: string
   name?: string
   singer?: string
+  interval?: string | null
   meta?: { songId?: string } & Record<string, unknown>
+}
+
+const parseIntervalMs = (interval?: string | null): number => {
+  if (!interval) return 0
+  const parts = interval.split(':').map(part => Number.parseInt(part, 10)).filter(part => Number.isFinite(part))
+  if (!parts.length) return 0
+  let seconds = 0
+  for (const part of parts) seconds = seconds * 60 + part
+  return seconds * 1000
+}
+
+/** 时长差在 8 秒内算同一首（不同版本/无版权替换时常有 1-3 秒差） */
+const durationMatches = (candidate: MusicInfoLike, target: { durationMs?: number }): boolean => {
+  const targetMs = Number(target.durationMs) || 0
+  const candidateMs = parseIntervalMs(candidate.interval)
+  if (!targetMs || !candidateMs) return true // 有一边不知道时长就不否决
+  return Math.abs(targetMs - candidateMs) <= 8000
 }
 
 const normalize = (text: string | undefined | null): string => String(text ?? '')
@@ -33,6 +51,7 @@ export const stableKeyOfMusicInfo = (info: MusicInfoLike | null | undefined): st
 export const isSameSong = (candidate: MusicInfoLike, target: TrackRef): boolean => {
   const nameEqual = normalize(candidate.name) === normalize(target.name)
   if (!nameEqual) return false
+  if (!durationMatches(candidate, target)) return false
   const candidateSingers = normalize(candidate.singer).split(/[、,，/&]/).filter(Boolean)
   const targetSingers = normalize(target.singer).split(/[、,，/&]/).filter(Boolean)
   if (!targetSingers.length) return true
@@ -47,6 +66,8 @@ export const pickBestTrack = <T extends MusicInfoLike>(items: T[], target: Track
   if (!items.length) return null
   const exact = items.find(item => stableKeyOfMusicInfo(item) === target.stableKey)
   if (exact) return exact
+  const sameSongWithDuration = items.find(item => isSameSong(item, target) && durationMatches(item, target))
+  if (sameSongWithDuration) return sameSongWithDuration
   const sameSong = items.find(item => isSameSong(item, target))
   if (sameSong) return sameSong
   const sameName = items.find(item => normalize(item.name) === normalize(target.name))
