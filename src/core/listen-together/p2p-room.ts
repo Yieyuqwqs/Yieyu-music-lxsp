@@ -169,6 +169,40 @@ export class P2PRoom {
         if (!payload.mode) return false
         this.state.playbackMode = payload.mode
         break
+      case 'QUEUE_ADD': {
+        const incoming = ((payload as { tracks?: TrackRef[] }).tracks ?? []).filter(track => track?.stableKey)
+        if (!incoming.length) return false
+        for (const track of incoming) {
+          if (this.state.queue.some(item => item.stableKey === track.stableKey)) continue
+          this.state.queue.push(track)
+        }
+        this.state.queue = this.state.queue.slice(0, 200)
+        // 队列本来是空的：直接把第一首摆上去（不自动播放，等房主按播放）
+        if (this.state.currentIndex < 0 && this.state.queue.length && !this.state.playback.trackStableKey) {
+          this.state.currentIndex = 0
+          this.state.playback = { ...emptyPlayback(), trackStableKey: this.state.queue[0].stableKey, anchorServerMs: serverNow }
+        }
+        break
+      }
+      case 'QUEUE_REMOVE': {
+        const key = (payload as { stableKey?: string }).stableKey
+        if (!key) return false
+        const index = this.state.queue.findIndex(item => item.stableKey === key)
+        if (index < 0) return false
+        this.state.queue.splice(index, 1)
+        if (index < this.state.currentIndex) this.state.currentIndex -= 1
+        else if (index === this.state.currentIndex) {
+          const next = this.state.queue[Math.min(index, this.state.queue.length - 1)]
+          if (next) {
+            this.state.currentIndex = Math.min(index, this.state.queue.length - 1)
+            this.state.playback = anchorForSetTrack(playback, serverNow, next.stableKey)
+          } else {
+            this.state.currentIndex = -1
+            this.state.playback = { ...emptyPlayback(), anchorServerMs: serverNow }
+          }
+        }
+        break
+      }
       case 'TRACK_FINISHED': {
         if (payload.trackStableKey !== playback.trackStableKey) return false
         const total = this.state.queue.length
@@ -195,6 +229,19 @@ export class P2PRoom {
   }
 
   // ---------------------------------------------------------- 成员：请求
+
+  /** 共享队列：加歌（成员发消息，房主落状态） */
+  queueAdd(tracks: TrackRef[]): void {
+    if (!tracks.length) return
+    if (this.role === 'host') { this.control('QUEUE_ADD', { tracks }); return }
+    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'QUEUE_ADD', tracks, memberId: this.memberId, from: this.memberId }))
+  }
+
+  /** 共享队列：删歌 */
+  queueRemove(stableKey: string): void {
+    if (this.role === 'host') { this.control('QUEUE_REMOVE', { stableKey }); return }
+    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'QUEUE_REMOVE', stableKey, memberId: this.memberId, from: this.memberId }))
+  }
 
   request(type: 'REQUEST_PLAY' | 'REQUEST_PAUSE' | 'REQUEST_SEEK' | 'REQUEST_SET_TRACK', extra: Record<string, unknown> = {}): void {
     if (this.role === 'host') {
@@ -230,6 +277,12 @@ export class P2PRoom {
       if (this.role === 'host') {
         this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'np_pong', clientNow: message.clientNow, serverNow: Date.now(), to: message.from }))
       }
+      return
+    }
+
+    // 房主：共享队列操作（任何成员都能加歌/删歌）
+    if (this.role === 'host' && (message.type === 'QUEUE_ADD' || message.type === 'QUEUE_REMOVE')) {
+      this.control(message.type, message as never)
       return
     }
 
