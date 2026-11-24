@@ -1,3 +1,12 @@
+// Node 版本检查：.ts 直跑依赖 strip-types（>=22.6）；低于此版本必须明确报错
+const major = Number(process.versions.node.split(".")[0])
+const minor = Number(process.versions.node.split(".")[1])
+if (major < 22 || (major === 22 && minor < 6)) {
+  console.error(`[测试运行器] Node ${process.versions.node} 不支持 .ts 直跑（需要 >=22.6）。`)
+  console.error("CI 里请用 actions/setup-node 指定 node-version: '24'")
+  process.exit(1)
+}
+
 /**
  * LXSP 引擎测试入口（零依赖）
  *
