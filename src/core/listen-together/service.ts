@@ -29,7 +29,7 @@ import type { TrackRef } from './protocol'
 import { RoomSession, type PlayerAdapter } from './room'
 import type { JoinResult, RoomState } from './protocol'
 import { reportError } from '@/core/listen-together/errors'
-import { logMediaProbe, startPlaybackSampling } from '@/core/listen-together/telemetry'
+import { logMediaProbe } from '@/core/listen-together/telemetry'
 
 export interface RoomStatus {
   connected: boolean
@@ -605,52 +605,6 @@ class ListenTogetherService {
       return { ok: false, status: 0, bytes: 0, type: '' }
     } finally {
       if (timer) clearTimeout(timer)
-    }
-  }
-
-  /** 自检结果（给 UI 弹窗用）：一次自检的完整证据 */
-  async runPlaybackSelfTest(): Promise<{ ok: boolean, durationMs: number, positionMs: number, state: string, probe: { status: number, bytes: number, type: string } | null, url: string, error: string | null }> {
-    const track = createPlayerAdapter().currentTrack()
-    if (!track) {
-      this.update({ lastError: '自检：当前没有在播的歌' })
-      return { ok: false, durationMs: 0, positionMs: 0, state: 'none', probe: null, url: '', error: '当前没有在播的歌' }
-    }
-    const probe = track.url ? await this.probeMediaUrl(track.url) : null
-    this.update({ lastEvent: `自检：probe=${probe ? `${probe.status}/${probe.bytes}B` : '无直链'}，开始播放验证…` })
-    const info = toNewMusicInfo({
-      source: track.source, name: track.name, singer: track.singer, songmid: track.id,
-      interval: '', albumName: '', img: '',
-      types: this.placeholderTypes(), _types: this.placeholderTypes(),
-    })
-    setPlayMusicInfo(null, info, true)
-    setMusicUrl(info as never)
-    startPlaybackSampling()
-    await new Promise((resolve) => setTimeout(resolve, 4000))
-    let durationMs = 0
-    let positionMs = 0
-    let state = 'unknown'
-    let error: string | null = null
-    try {
-      durationMs = Math.round((await TrackPlayer.getDuration()) ?? 0)
-      positionMs = Math.round((await TrackPlayer.getPosition()) ?? 0)
-      state = String((await TrackPlayer.getPlaybackState() as { state?: unknown })?.state ?? '?')
-    } catch (err) {
-      error = (err as Error).message
-      reportError('selftest', err)
-    }
-    const ok = durationMs > 0 && error == null
-    this.update({
-      lastEvent: `自检结果：duration=${durationMs}ms position=${positionMs}ms state=${state}`,
-      lastError: ok ? null : `自检失败：duration=${durationMs}ms${error ? ` err=${error}` : ''}`,
-    })
-    return {
-      ok,
-      durationMs,
-      positionMs,
-      state,
-      probe: probe ? { status: probe.status, bytes: probe.bytes, type: probe.type } : null,
-      url: track.url ?? '',
-      error,
     }
   }
 
