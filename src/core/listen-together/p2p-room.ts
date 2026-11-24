@@ -105,7 +105,9 @@ export class P2PRoom {
   private startBroadcast(): void {
     if (this.broadcastTimer) return
     this.broadcastTimer = setInterval(() => {
-      if (this.role === 'host') this.broadcastState()
+      if (this.role !== 'host') return
+      this.pruneMembers()
+      this.broadcastState()
     }, BROADCAST_MS)
   }
 
@@ -202,6 +204,12 @@ export class P2PRoom {
     try { message = JSON.parse(payload) } catch (error) { return }
     if (!message?.type) return
 
+    // 房主：谁发消息来，谁就是成员（p2p 没有服务端登记，只能靠这一手）
+    if (this.role === 'host') {
+      const peerId = typeof message.from === 'string' ? message.from : (typeof message.memberId === 'string' ? message.memberId : null)
+      if (peerId && peerId !== this.memberId) this.touchMember(peerId)
+    }
+
     // 时钟：房主用自己时间回 pong；成员拿 pong 校准
     if (message.type === 'np_ping') {
       if (this.role === 'host') {
@@ -247,6 +255,36 @@ export class P2PRoom {
       if (message.memberId && message.memberId !== this.memberId) return
       this.options.onRejected?.(String(message.requestType), String(message.reason))
     }
+  }
+
+  /** 房主维护成员表：新面孔加进来，久没动静的标离线 */
+  private touchMember(memberId: string): void {
+    const existing = this.state.members.find(item => item.memberId === memberId)
+    if (existing) {
+      existing.online = true
+      existing.lastSeenAt = Date.now()
+      this.broadcastState()
+      return
+    }
+    this.state.members = [...this.state.members, {
+      memberId,
+      role: 'LISTENER',
+      online: true,
+      joinedAt: Date.now(),
+      lastSeenAt: Date.now(),
+    }]
+    this.broadcastState()
+  }
+
+  private pruneMembers(): void {
+    const cutoff = Date.now() - 30_000
+    let changed = false
+    for (const member of this.state.members) {
+      if (member.memberId === this.memberId) continue
+      const stale = member.lastSeenAt < cutoff
+      if (stale && member.online) { member.online = false; changed = true }
+    }
+    if (changed) this.broadcastState()
   }
 
   /** 成员发时钟探测（房主会回 np_pong） */
