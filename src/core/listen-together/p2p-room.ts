@@ -27,7 +27,7 @@ export interface P2PRoomOptions {
   onError?: (message: string) => void
 }
 
-const BROADCAST_MS = 10_000
+const BROADCAST_MS = 3_000 // 兜底广播：3 秒一次（真机消息几十毫秒，丢一条也能立刻补）
 
 export const topicOf = (roomId: string): string => `lx-listen/${roomId}`
 
