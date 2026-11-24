@@ -36,6 +36,9 @@ export interface RoomStatus {
   lastError: string | null
   /** 最近一条房间事件（切歌/对齐），方便排查「为什么没反应」 */
   lastEvent: string | null
+  /** 共享队列（房间里的，不是本地列表） */
+  queue: TrackRef[]
+  currentIndex: number
 }
 
 const createPlayerAdapter = (): PlayerAdapter => ({
@@ -65,6 +68,7 @@ class ListenTogetherService {
   private status: RoomStatus = {
     connected: false, roomId: null, role: null, memberId: null,
     members: [], isPlaying: false, positionMs: 0, state: null, lastError: null, lastEvent: null,
+    queue: [], currentIndex: -1,
   }
   private listeners = new Set<(status: RoomStatus) => void>()
 
@@ -129,6 +133,8 @@ class ListenTogetherService {
       else if (event.type === 'state') {
         this.update({
           state: event.state,
+          queue: [...event.state.queue],
+          currentIndex: event.state.currentIndex,
           roomId: event.state.roomId,
           members: event.state.members.map(m => ({ memberId: m.memberId, role: m.role, online: m.online })),
           isPlaying: event.state.playback.isPlaying,
@@ -174,6 +180,8 @@ class ListenTogetherService {
           members: state.members.map(m => ({ memberId: m.memberId, role: m.role, online: m.online })),
           isPlaying: state.playback.isPlaying,
           positionMs: room.playheadMs(),
+          queue: [...state.queue],
+          currentIndex: state.currentIndex,
         })
         // 成员收到状态 → 对齐本地播放
         if (role === 'guest' && this.session) this.session.applyState(state)
@@ -449,6 +457,56 @@ class ListenTogetherService {
   pushTrack(): void {
     void this.pushTrackWithUrl()
   }
+  /** 把当前正在播的歌加进共享队列（谁都能加） */
+  addCurrentToQueue(): void {
+    const track = createPlayerAdapter().currentTrack()
+    if (!track) {
+      this.update({ lastError: '当前没有在播的歌' })
+      return
+    }
+    if (this.p2p) this.p2p.queueAdd([track])
+    else void this.pushQueueAdd([track])
+    this.update({ lastEvent: `已加入队列：${track.name}` })
+  }
+
+  /** 把某首歌加进共享队列 */
+  addTrackToQueue(track: TrackRef): void {
+    if (this.p2p) this.p2p.queueAdd([track])
+    else void this.pushQueueAdd([track])
+    this.update({ lastEvent: `已加入队列：${track.name}` })
+  }
+
+  /** 从共享队列里删掉 */
+  removeFromQueue(stableKey: string): void {
+    if (this.p2p) this.p2p.queueRemove(stableKey)
+    else void this.pushQueueRemove(stableKey)
+  }
+
+  /** 点队列里的第 index 首 → 切过去（房主直接切，成员走申请） */
+  playQueueIndex(index: number): void {
+    const track = this.status.queue[index]
+    if (!track) return
+    if (this.p2p) {
+      if (this.p2p.role === 'host') this.p2p.control('SET_TRACK', { track, index })
+      else this.p2p.request('REQUEST_SET_TRACK', { track })
+      return
+    }
+    this.session?.notifyTrackChanged(track, index)
+  }
+
+  private async pushQueueAdd(tracks: TrackRef[]): Promise<void> {
+    const client = this.client
+    if (!client) return
+    await client.setQueue([...this.status.queue, ...tracks], this.status.currentIndex).catch(() => {})
+  }
+
+  private async pushQueueRemove(stableKey: string): Promise<void> {
+    const client = this.client
+    if (!client) return
+    const queue = this.status.queue.filter(track => track.stableKey !== stableKey)
+    await client.setQueue(queue, this.status.currentIndex).catch(() => {})
+  }
+
   /** 成员端：申请 */
   requestPlay(): void {
     if (this.p2p) { this.p2p.request('REQUEST_PLAY'); return }
