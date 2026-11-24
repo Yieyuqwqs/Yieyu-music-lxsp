@@ -49,14 +49,14 @@ export const scheduleAutocheck = (label: string): void => {
       try {
         durationMs = Math.round((await TrackPlayer.getDuration()) ?? 0)
         positionMs = Math.round((await TrackPlayer.getPosition()) ?? 0)
-        state = String((await TrackPlayer.getPlaybackState() as { state?: unknown })?.state ?? '?')
+        state = String(((await (TrackPlayer as unknown as { getPlaybackState?: () => Promise<{ state?: unknown }> }).getPlaybackState?.()) as { state?: unknown } | undefined)?.state ?? 'unavailable')
       } catch (error) {
-        state = `error:${(error as Error).message}`
+        state = `probe-error:${(error as Error).message}`
       }
       seq += 1
-      records.push({ at: new Date().toISOString(), seq, durationMs, positionMs, state, ok: durationMs > 0 })
+      records.push({ at: new Date().toISOString(), seq, durationMs, positionMs, state, ok: durationMs > 5000 })
       records.length > 20 && records.shift()
-      log.info(`[autocheck] #${seq} ${label} duration=${durationMs}ms position=${positionMs}ms state=${state} ok=${durationMs > 0}`)
+      log.info(`[autocheck] #${seq} ${label} duration=${durationMs}ms position=${positionMs}ms state=${state} ok=${durationMs > 5000}`)
       await flush()
     })()
   }, 3000)
