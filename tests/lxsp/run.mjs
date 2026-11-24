@@ -32,12 +32,13 @@ const t = {
   },
 }
 
-const files = ['./track-map.test.mjs', './contract-listen-together.test.mjs', './audit.test.mjs', './branch.test.mjs', './modules.test.mjs', './live.test.mjs']
+const files = ['./track-map.test.mjs', './contract-listen-together.test.mjs', './audit.test.mjs', './branch.test.mjs', './modules.test.mjs', './live.test.mjs', './device-sim.test.mjs']
 for (const file of files) {
   const mod = await import(file)
   mod.default(t)
   if (typeof mod.enforceSuite === 'function') mod.enforceSuite(t)
   if (typeof mod.preciseSuite === 'function') mod.preciseSuite(t)
+  if (typeof mod.authSuite === 'function') mod.authSuite(t)
 }
 
 let passed = 0
