@@ -7,6 +7,7 @@ import DislikeList from './DislikeList'
 import Log from './Log'
 import SourceSpeedTest from './SourceSpeedTest'
 import Recognize from './Recognize'
+import ListenTogether from './ListenTogether'
 // import MaxCache from './MaxCache'
 import { useI18n } from '@/lang'
 
@@ -20,6 +21,7 @@ export default memo(() => {
       <DislikeList />
       <Recognize />
       <SourceSpeedTest />
+      <ListenTogether />
       <Log />
       {/* <MaxCache /> */}
     </Section>
