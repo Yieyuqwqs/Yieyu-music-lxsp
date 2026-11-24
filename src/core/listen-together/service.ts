@@ -77,8 +77,6 @@ const createPlayerAdapter = (): PlayerAdapter => ({
 class ListenTogetherService {
   private client: ListenTogetherClient | null = null
   private clientBaseUrl = ''
-  /** 成员端上一次应用过的房间曲目（用来判断“换歌了”） */
-  private lastGuestTrackKey: string | null = null
   private session: RoomSession | null = null
   private status: RoomStatus = {
     connected: false, roomId: null, role: null, memberId: null,
@@ -212,7 +210,6 @@ class ListenTogetherService {
     this.p2p = null
     if (this.stopSyncPump) { this.stopSyncPump(); this.stopSyncPump = null }
     this.scheduled.clear()
-    this.lastGuestTrackKey = null
     this.session?.stop()
     this.session = null
     this.client?.disconnect()
@@ -263,17 +260,8 @@ class ListenTogetherService {
           const next = state.queue[state.currentIndex + 1]
           void this.preloadNextTrack(next)
         }
-        // 成员收到状态 → 对齐本地播放
-        if (role === 'guest' && this.session) {
-          const current = state.queue[state.currentIndex]
-          const changed = current && current.stableKey !== this.lastGuestTrackKey
-          if (current && changed) {
-            this.lastGuestTrackKey = current.stableKey
-            this.scheduleMemberStart(current, state.playback.anchorServerMs, state.playback.positionMs, serverNow)
-          } else {
-            this.session.applyState(state)
-          }
-        }
+        // 成员：唯一一条对齐路径 —— RoomSession.applyState（内部 version 守卫）
+        if (role === 'guest') this.session?.applyState(state)
       },
       onTransportChange: (info) => this.update({ transport: info.transport }),
       onRejected: (requestType, reason) => this.update({ lastError: `请求被拒（${requestType}）：${reason}` }),
@@ -649,27 +637,9 @@ class ListenTogetherService {
     }
   }
 
-  private scheduleMemberStart(track: TrackRef, anchorServerMs: number, positionMs: number, serverNow: number): void {
-    if (this.startTimer) { clearTimeout(this.startTimer); this.startTimer = null }
-    const monoAtReceive = monotonicMs()
-    const leadMs = anchorServerMs - serverNow // 通常 400ms
-    const fireIn = Math.max(0, Math.min(2000, leadMs))
-    this.startTimer = null
-    void this.scheduleAt(fireIn, () => {
-      const monoNow = monotonicMs()
-      const late = Math.max(0, monoNow - monoAtReceive)
-      const target = Math.max(0, positionMs + Math.max(0, late - leadMs))
-      void this.startTrackAt(track, target)
-    })
-  }
 
-  /** 在指定位置开始播放这首歌（成员端） */
-  private async startTrackAt(track: TrackRef, positionMs: number): Promise<void> {
-    const ok = await this.switchToTrack(track)
-    if (!ok) return
-    void setCurrentTime(positionMs / 1000)
-    this.update({ lastEvent: `已对齐起播：${track.name} @ ${(positionMs / 1000).toFixed(2)}s` })
-  }
+
+
 
   /** 房间播放头（毫秒）：p2p 用房间时钟、http 用客户端时钟，UI 每秒取一次 */
   playheadMs(): number {
