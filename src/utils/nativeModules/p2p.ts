@@ -5,6 +5,7 @@
  * 这一层就是「F1 引擎」：没有 broker 中转，消息直接打到对方手机上。
  */
 import { DeviceEventEmitter, NativeModules } from 'react-native'
+import { reportError } from '@/core/listen-together/errors'
 
 interface P2PModule {
   p2pStart?: (host: string, port: number, timeoutMs: number) => Promise<string>
@@ -56,7 +57,7 @@ export const directStart = async(timeoutMs = 2500): Promise<DirectAddress | null
         const privateIp = (await native.p2pLocalIp?.()) ?? ''
         return { mapped, privateIp }
       }
-    } catch (error) { /* 换下一个 */ }
+    } catch (error) { reportError('stun:尝试下一个服务器', error) }
   }
   return null
 }
@@ -69,6 +70,7 @@ export const directConnect = async(mapped: string): Promise<boolean> => {
   try {
     return await native.p2pConnect(ip, port)
   } catch (error) {
+    reportError('p2p:连接', error)
     return false
   }
 }
@@ -78,6 +80,7 @@ export const directSend = async(text: string): Promise<boolean> => {
   try {
     return await native.p2pSend(text)
   } catch (error) {
+    reportError('p2p:打洞', error)
     return false
   }
 }
@@ -88,6 +91,7 @@ export const directPoll = async(timeoutMs = 300): Promise<string> => {
   try {
     return (await native.p2pPoll(timeoutMs)) ?? ''
   } catch (error) {
+    reportError('p2p:收包', error)
     return ''
   }
 }
@@ -97,6 +101,7 @@ export const directStats = async(): Promise<string> => {
   try {
     return await native.p2pStats()
   } catch (error) {
+    reportError('p2p', error)
     return ''
   }
 }
@@ -105,7 +110,7 @@ export const directStop = async(): Promise<void> => {
   if (!native?.p2pStop) return
   try {
     await native.p2pStop()
-  } catch (error) { /* 忽略 */ }
+  } catch (error) { reportError('p2p:发送', error) }
 }
 
 
