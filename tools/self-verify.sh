@@ -24,8 +24,30 @@ node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs 2>&1 | tail -3 || fail=1
 
 echo "== 3/4 真机模拟闭环（真实端点/直链/故障注入）=="
 node tools/device-sim.mjs | tail -8 || fail=1
-echo "== 4/4 语法解析 =="
-node -e 'const fs=require("fs");console.log("skip")'
+
+echo "== 4/4 语法解析（全部改动文件）=="
+node -e '
+const { createRequire } = require("node:module")
+const req = createRequire(process.cwd() + "/package.json")
+let parser
+try { parser = req("@babel/parser") } catch (e) { parser = require(process.env.HOME + "/parsecheck/node_modules/@babel/parser") }
+const fs = require("fs")
+const files = [
+  "src/core/listen-together/service.ts",
+  "src/core/listen-together/p2p-room.ts",
+  "src/core/listen-together/telemetry.ts",
+  "src/plugins/player/service.ts",
+  "src/core/init/player/playProgress.ts",
+  "src/screens/Home/Views/Setting/settings/Other/ListenTogether.tsx",
+]
+let bad = 0
+for (const f of files) {
+  try { parser.parse(fs.readFileSync(f, "utf8"), { sourceType: "module", plugins: ["typescript", "jsx"] }) }
+  catch (e) { bad++; console.log("  FAIL", f, e.message) }
+}
+console.log(bad === 0 ? "  OK 全部解析通过（" + files.length + " 个文件）" : "  FAIL " + bad + " 个文件")
+process.exit(bad === 0 ? 0 : 1)
+' || fail=1
 
 echo
 [ "$fail" = "0" ] && echo "SELF-VERIFY: PASS" || echo "SELF-VERIFY: FAIL"
