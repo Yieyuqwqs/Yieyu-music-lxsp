@@ -4,7 +4,7 @@
  * 目的：把「锚点 + 播放头」的计算和定时放到原生，
  * 避开 JS 主线程卡顿带来的 10–50ms 抖动。拿不到原生就退回 JS 计算。
  */
-import { NativeModules } from 'react-native'
+import { DeviceEventEmitter, NativeModules } from 'react-native'
 import { monotonicMs } from './clockrt'
 
 interface SyncModule {
@@ -15,6 +15,10 @@ interface SyncModule {
   syncSchedule?: (commandId: number, delayMs: number) => Promise<boolean>
   syncCancel?: (commandId: number) => Promise<boolean>
   syncClear?: () => Promise<boolean>
+  syncSchedule?: (commandId: number, delayMs: number) => Promise<boolean>
+  syncCancel?: (commandId: number) => Promise<boolean>
+  syncStartPump?: () => Promise<boolean>
+  syncStopPump?: () => Promise<boolean>
 }
 
 const native = (NativeModules as { YieyuCore?: SyncModule }).YieyuCore
@@ -56,4 +60,29 @@ export const syncLeadMs = async(): Promise<number | null> => {
 export const syncClear = async(): Promise<void> => {
   if (!native?.syncClear) return
   try { await native.syncClear() } catch (error) { /* 忽略 */ }
+}
+
+
+/** 原生定时：到点由 C++ 线程叫醒，JS 只负责执行（误差 <1ms，JS 定时器是 10–50ms） */
+export const scheduleNative = async(commandId: number, delayMs: number): Promise<boolean> => {
+  if (!native?.syncSchedule) return false
+  try { return await native.syncSchedule(commandId, Math.max(0, Math.round(delayMs))) } catch (error) { return false }
+}
+
+export const cancelNative = async(commandId: number): Promise<void> => {
+  if (!native?.syncCancel) return
+  try { await native.syncCancel(commandId) } catch (error) { /* 忽略 */ }
+}
+
+/** 订阅原生到点事件 */
+export const startSyncPump = (handler: (commandId: number) => void): (() => void) => {
+  if (!native?.syncStartPump) return () => {}
+  const sub = DeviceEventEmitter.addListener('lxp2p:sync', (id: number) => {
+    if (typeof id === 'number') handler(id)
+  })
+  void native.syncStartPump().catch(() => {})
+  return () => {
+    sub.remove()
+    void native?.syncStopPump?.().catch(() => {})
+  }
 }
