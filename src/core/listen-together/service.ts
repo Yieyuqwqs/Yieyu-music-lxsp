@@ -13,6 +13,7 @@ import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
 import { P2PRoom, makeRoomId } from './p2p-room'
 import { monotonicMs, primeClock } from '@/utils/nativeModules/clockrt'
+import { pushAnchor, syncPlayheadMs, syncClear } from '@/utils/nativeModules/syncEngine'
 import { playheadAt } from './playhead'
 import { getResolvedUrl, getLastResolvedUrl, rememberResolvedUrl } from './resolved-url'
 import { getMusicUrl } from '@/core/music'
@@ -187,6 +188,7 @@ class ListenTogetherService {
       onDisconnected: () => this.update({ connected: false }),
       onState: (state, serverNow) => {
         void primeClock()
+        void pushAnchor(state.playback, serverNow)
         this.update({
           state,
           roomId: state.roomId,
@@ -543,6 +545,11 @@ class ListenTogetherService {
 
   /** 房间播放头（毫秒）：p2p 用房间时钟、http 用客户端时钟，UI 每秒取一次 */
   playheadMs(): number {
+    // 优先进原生（单调时钟、无桥抖动），不可用时再走 JS
+    return syncPlayheadMs(() => this.playheadFallback())
+  }
+
+  private playheadFallback(): number {
     try {
       if (this.p2p) return this.p2p.playheadMs()
       if (this.client) return this.client.playheadMs()
