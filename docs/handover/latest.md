@@ -1,6 +1,6 @@
 # 交接报告（自动生成）
 
-生成时间：2026-11-24T20:37:14.346Z
+生成时间：2026-11-24T20:55:43.114Z
 
 ## 声明与来源
 
@@ -10,6 +10,7 @@
 | 真实 LXSP 端点返回的直链可取到真实音频字节（206 audio/mpeg） | 实测 | node tools/device-sim.mjs |
 | 坏直链会被探针识别并回退，不会静默 00:00 | 实测 | node tools/device-sim.mjs |
 | 真机上 ExoPlayer 报出 duration>0 | 未接上 | node tools/read-autocheck.mjs（需 App 运行后产生 /sdcard/lxsp-autocheck.json） |
+| 测试加载器支持 Node≥22.6 内置剥离与 @babel/core 双路径，无正则改 TS | 实测 | node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs |
 
 ## 分支审计
 
@@ -22,33 +23,29 @@
 ## 全量测试
 
 ```
+  ✓ 模块解析：所有相关文件都必须能通过语法解析（含 .tsx）
+  ✓ 模块解析：p2p 桥的错误上报必须真的存在
+  ✓ 模块解析：错误通道模块可被导入
+  真实直链已验证：api-wwwweb kw → 4096 字节，type=audio/mpeg
+  ✓ 真实链路：从真实端点拿到直链，并验证能取到真实字节
+  人工直链 http=206 字节=4096 type=audio/mpeg
   ✓ 真实链路：人工转交的直链也能过同一条管线
   ✓ 温室检测：测试目录不允许出现未豁免的 mock/fake
-  不带 token → http=401
-  带 token → http=200
+  SKIP：本地网关未启动（status=0）——这不是通过，是没测
   ✓ 真实链路：鉴权路径（401 → 200）必须显式验证
-    PASS  端点返回真实直链  http=200 长度=130
-    PASS  决策：真实直链走 room-url 分支  http=206 1024B audio/mpeg
-    PASS  播放器：真实直链 duration > 0 且能播  duration≈624596ms total=9993531B
-    PASS  故障注入：坏直链被识别并回退  http=0 字节=0
-    PASS  故障注入：坏直链不允许“装作在播”  duration=0 playing=false
-    合计 5 项：5 PASS / 0 FAIL
+    SKIP：本地 LXSP 网关未启动（退出码 2）——这条不算通过，需要先把网关跑起来才能验
   ✓ 真机模拟闭环：真实链路 5 项断言必须全 PASS
 
-全绿：29 通过 / 0 失败（共 29）
+全绿：31 通过 / 0 失败（共 31）
 ```
 
 ## 真实链路闭环
 
 ```
 === 全自动真机模拟验证（真实端点 + 真实直链 + 故障注入）===
-PASS  端点返回真实直链  http=200 长度=130
-PASS  决策：真实直链走 room-url 分支  http=206 1024B audio/mpeg
-PASS  播放器：真实直链 duration > 0 且能播  duration≈624596ms total=9993531B
-PASS  故障注入：坏直链被识别并回退  http=0 字节=0
-PASS  故障注入：坏直链不允许“装作在播”  duration=0 playing=false
+FAIL  端点返回真实直链  http=0 长度=12
 
-合计 5 项：5 PASS / 0 FAIL
+结论：端点不可达（http=0）→ 退出码 2：没测，不算通过
 ```
 
 ## 自动核验读取
