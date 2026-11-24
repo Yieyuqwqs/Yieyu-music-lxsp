@@ -41,6 +41,8 @@ export interface RoomStatus {
   lastEvent: string | null
   /** 房间当前歌曲的实时状态（UI 每秒取一次 playheadMs 显示） */
   nowPlaying: { name: string, singer: string, stableKey: string, isPlaying: boolean } | null
+  /** 直连通道状态（UDP 打洞成功后控制消息走它） */
+  direct: { up: boolean, local: string | null, remote: string | null }
   /** 共享队列（房间里的，不是本地列表） */
   queue: TrackRef[]
   currentIndex: number
@@ -76,6 +78,7 @@ class ListenTogetherService {
     connected: false, roomId: null, role: null, memberId: null,
     members: [], isPlaying: false, positionMs: 0, state: null, lastError: null, lastEvent: null,
     queue: [], currentIndex: -1, nowPlaying: null,
+    direct: { up: false, local: null, remote: null },
   }
   private listeners = new Set<(status: RoomStatus) => void>()
 
@@ -214,6 +217,7 @@ class ListenTogetherService {
           }
         }
       },
+      onDirectChange: (info) => this.update({ direct: { up: info.up, local: info.local ?? null, remote: info.remote ?? null } }),
       onRejected: (requestType, reason) => this.update({ lastError: `请求被拒（${requestType}）：${reason}` }),
       onError: (message) => this.update({ lastError: message }),
     })
