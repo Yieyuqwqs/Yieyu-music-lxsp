@@ -71,6 +71,9 @@ export class MqttClient {
   private closedByUser = false
   private ready = false
   private reconnectAttempt = 0
+  private packetId = 0
+  /** qos1 已发布但还没收到 PUBACK 的消息（丢了就靠 broker 重投） */
+  private inflight = new Map<number, string>()
 
   constructor(options: MqttOptions = {}) {
     this.options = options
@@ -160,11 +163,22 @@ export class MqttClient {
         this.startPing()
         this.options.onConnect?.()
       } else if (type === 3) {
-        // PUBLISH
+        // PUBLISH（qos1 会多带 2 字节 packetId，要按 QoS 位判断）
+        const qos = (header >> 1) & 0x03
         const topicLen = (body[0] << 8) | body[1]
         const topic = textEncoder.decode(body.subarray(2, 2 + topicLen))
-        const payload = textEncoder.decode(body.subarray(2 + topicLen))
+        const offsetAfterTopic = 2 + topicLen + (qos > 0 ? 2 : 0)
+        const payload = textEncoder.decode(body.subarray(offsetAfterTopic))
+        if (qos === 1) {
+          // 回 PUBACK（报文类型 4）
+          const id = (body[2 + topicLen] << 8) | body[3 + topicLen]
+          try { this.ws?.send(Uint8Array.from([0x40, 0x02, (id >> 8) & 0xff, id & 0xff])) } catch (error) { /* 忽略 */ }
+        }
         this.options.onMessage?.(topic, payload)
+      } else if (type === 4) {
+        // PUBACK：清 inflight
+        const id = (body[0] << 8) | body[1]
+        this.inflight.delete(id)
       }
       offset = pos + length
     }
@@ -185,14 +199,19 @@ export class MqttClient {
 
   private sendSubscribe(topic: string): void {
     if (!this.ws) return
-    try { this.ws.send(packet(0x82, [0x00, 0x01, ...utf8Field(topic), 0x00])) } catch (error) { /* 忽略 */ }
+    try { this.ws.send(packet(0x82, [0x00, 0x01, ...utf8Field(topic), 0x01])) } catch (error) { /* 忽略 */ }
   }
 
   publish(topic: string, payload: string): boolean {
     if (!this.ready || !this.ws) return false
-    const body = [...utf8Field(topic), ...textEncoder.encode(payload)]
+    // QoS1：带 packetId，broker 收到会回 PUBACK；没回就一直重投，换歌/拖动不会凭空丢掉
+    this.packetId = (this.packetId % 65535) + 1
+    const id = this.packetId
+    const body = [...utf8Field(topic), (id >> 8) & 0xff, id & 0xff, ...textEncoder.encode(payload)]
     try {
-      this.ws.send(packet(0x30, body))
+      this.ws.send(packet(0x32, body))
+      this.inflight.set(id, payload)
+      setTimeout(() => { this.inflight.delete(id) }, 10_000)
       return true
     } catch (error) {
       return false
