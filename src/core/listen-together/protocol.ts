@@ -62,6 +62,10 @@ export type ClientMessage =
   | { type: 'SEEK', positionMs: number }
   | { type: 'SET_TRACK', track: TrackRef, index?: number }
   | { type: 'SET_QUEUE', queue: TrackRef[], currentIndex?: number }
+  /** 任何人往共享队列里加歌 —— 一起听的核心：不是各听各的本地列表 */
+  | { type: 'QUEUE_ADD', tracks: TrackRef[] }
+  /** 任何人从共享队列里删歌 */
+  | { type: 'QUEUE_REMOVE', stableKey: string }
   | { type: 'PLAYBACK_MODE', mode: PlaybackMode }
   | { type: 'HEARTBEAT', positionMs?: number }
   | { type: 'TRACK_FINISHED', trackStableKey: string }
