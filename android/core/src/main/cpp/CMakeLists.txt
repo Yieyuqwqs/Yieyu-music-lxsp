@@ -21,6 +21,8 @@ add_library(yieyu_core SHARED
     p2p/p2p_stun.cpp
     p2p/p2p_peer.cpp
     p2p/p2p_bridge.cpp
+    p2p/sync_engine.cpp
+    p2p/sync_bridge.cpp
     ${WASM3_DIR}/m3_core.c
     ${WASM3_DIR}/m3_env.c
     ${WASM3_DIR}/m3_parse.c
