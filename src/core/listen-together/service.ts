@@ -45,8 +45,8 @@ export interface RoomStatus {
   nowPlaying: { name: string, singer: string, stableKey: string, isPlaying: boolean } | null
   /** 原生引擎能力（C++ 直连 / C++ 同步引擎是否真的装进了这个 APK） */
   engine: { direct: boolean, sync: boolean, nativeClock: boolean }
-  /** 直连通道状态（UDP 打洞成功后控制消息走它） */
-  direct: { up: boolean, local: string | null, remote: string | null }
+  /** 当前通道（唯一真相来源，由 P2PRoom 上报）：connecting / direct / relay */
+  transport: 'connecting' | 'direct' | 'relay'
   /** 共享队列（房间里的，不是本地列表） */
   queue: TrackRef[]
   currentIndex: number
@@ -82,7 +82,7 @@ class ListenTogetherService {
     connected: false, roomId: null, role: null, memberId: null,
     members: [], isPlaying: false, positionMs: 0, state: null, lastError: null, lastEvent: null,
     queue: [], currentIndex: -1, nowPlaying: null,
-    direct: { up: false, local: null, remote: null },
+    transport: 'connecting',
     engine: { direct: false, sync: false, nativeClock: false },
   }
   private listeners = new Set<(status: RoomStatus) => void>()
@@ -197,13 +197,20 @@ class ListenTogetherService {
   private p2p: P2PRoom | null = null
 
   /** 原子地重置所有会话资源（切房/切模式/离开都走它，避免旧实例继续广播） */
-  private async resetSession(): Promise<void> {
+  /** 会话代际：每次建/切/离开都 +1；过期回调一律 no-op（结构性防串场） */
+  private generation = 0
+
+  /**
+   * 同步 teardown：必须在建新会话【之前】同步跑完。
+   * 之前这里是 async 且被 void 调用，内部 await 之后又把刚装好的播放器钩子清空了——
+   * 表现就是“房主本地播放动作不广播”。根因是顺序，不是钩子本身。
+   */
+  private teardownSync(): void {
     this.p2p?.close()
     this.p2p = null
     if (this.stopSyncPump) { this.stopSyncPump(); this.stopSyncPump = null }
     this.scheduled.clear()
     this.lastGuestTrackKey = null
-    await this.clearPreloads().catch(() => {})
     this.session?.stop()
     this.session = null
     this.client?.disconnect()
@@ -213,8 +220,15 @@ class ListenTogetherService {
     this.hooksInstalled = false
   }
 
+  /** 异步清理（预缓冲轨），带代际校验，绝不回写新会话的状态 */
+  private cleanupAsync(generation: number): void {
+    void this.clearPreloads().catch(() => {})
+    if (generation !== this.generation) return
+  }
+
   private startP2P(roomId: string, role: 'host' | 'guest'): void {
-    void this.resetSession()
+    this.generation += 1
+    this.teardownSync()
     const room = new P2PRoom({
       roomId,
       role,
@@ -259,7 +273,7 @@ class ListenTogetherService {
           }
         }
       },
-      onDirectChange: (info) => this.update({ direct: { up: info.up, local: info.local ?? null, remote: info.remote ?? null } }),
+      onTransportChange: (info) => this.update({ transport: info.transport }),
       onRejected: (requestType, reason) => this.update({ lastError: `请求被拒（${requestType}）：${reason}` }),
       onError: (message) => this.update({ lastError: message }),
     })
@@ -348,6 +362,7 @@ class ListenTogetherService {
   }
 
   async leave(): Promise<void> {
+    this.generation += 1
     await this.clearPreloads()
     if (this.stopSyncPump) { this.stopSyncPump(); this.stopSyncPump = null }
     this.scheduled.clear()
@@ -381,19 +396,21 @@ class ListenTogetherService {
   private installPlayerHooks(): void {
     if (this.hooksInstalled) return
     this.hooksInstalled = true
+    const generation = this.generation
+    const alive = () => generation === this.generation
     setPlayerHooks({
-      onPlay: () => this.pushPlay(),
-      onPause: () => this.pushPause(),
-      onSeek: (positionMs) => this.pushSeek(positionMs),
+      onPlay: () => { if (alive()) this.pushPlay() },
+      onPause: () => { if (alive()) this.pushPause() },
+      onSeek: (positionMs) => { if (alive()) this.pushSeek(positionMs) },
       onTrackChange: (musicInfo) => {
         // 只有房主才往房间推；成员端的换歌是「被动的」，推回去会打架
-        if (!this.isHost()) return
+        if (!alive() || !this.isHost()) return
         // 直链可能还没好，先占位推一次（不带链接），等 onResourceReady 再补带链接的一次
         setTimeout(() => { if (this.isHost()) void this.pushTrackWithUrl() }, 250)
       },
       onResourceReady: () => {
         // 直链已经落地：立刻把「歌 + 直链」推给房间，这才是丝滑的关键一步
-        if (!this.isHost()) return
+        if (!alive() || !this.isHost()) return
         void this.pushTrackWithUrl()
       },
     })
