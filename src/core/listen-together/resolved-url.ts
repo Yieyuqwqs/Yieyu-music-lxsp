@@ -13,7 +13,8 @@ interface Entry {
 }
 
 const MAX = 8
-const TTL_MS = 6 * 60 * 60 * 1000
+// 直链寿命由 CDN 决定（实测酷我/酷狗几十分钟即过期），缓存不能超过它
+const TTL_MS = 5 * 60 * 1000
 const entries = new Map<string, Entry>()
 let lastKey: string | null = null
 
