@@ -54,8 +54,6 @@ export default () => {
   }
 
   const getCurrentTime = () => {
-    // 自愈：总时长还没拿到就顺手补一次（原实现只在 handlePlay 时读一次，读早了就永远是 0）
-    if (!(playerState.progress.maxPlayTime > 0)) void getMaxTime()
     let id = playerState.musicInfo.id
     void getPosition().then(position => {
       if (!position || id != playerState.musicInfo.id) return
@@ -81,22 +79,6 @@ export default () => {
       }
     })
   }
-  let maxTimeRetryTimer: ReturnType<typeof BackgroundTimer.setTimeout> | null = null
-  const scheduleMaxTimeRetry = (attempt = 0) => {
-    if (maxTimeRetryTimer) BackgroundTimer.clearTimeout(maxTimeRetryTimer)
-    if (attempt > 5) return
-    maxTimeRetryTimer = BackgroundTimer.setTimeout(() => {
-      maxTimeRetryTimer = null
-      void (async() => {
-        const current = await getDuration().catch(() => 0)
-        if (current > 0) { setMaxplayTime(current); scheduleMaxTimeRetry(0); return }
-        scheduleMaxTimeRetry(attempt + 1)
-      })()
-    }, [300, 800, 1500, 2500, 4000][Math.min(attempt, 4)])
-  }
-
-  refreshDurationImpl = () => { void getMaxTime() }
-
   const getMaxTime = async() => {
     const win = getCueWindow()
     if (win != null) {
@@ -104,9 +86,7 @@ export default () => {
       setMaxplayTime(Math.max(0, win.end - win.start))
       return
     }
-    const duration = await getDuration()
-    setMaxplayTime(duration)
-    if (!(duration > 0)) scheduleMaxTimeRetry(0)
+    setMaxplayTime(await getDuration())
 
     if (playerState.playMusicInfo.musicInfo && 'source' in playerState.playMusicInfo.musicInfo && !playerState.playMusicInfo.musicInfo.interval) {
       // console.log(formatPlayTime2(playProgress.maxPlayTime))
