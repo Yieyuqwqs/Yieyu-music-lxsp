@@ -39,7 +39,7 @@ const flush = async(): Promise<void> => {
 
 /** Ready 事件后调用：3 秒后采样一次并落盘（每首歌一条） */
 export const scheduleAutocheck = (label: string): void => {
-  if (pending) clearTimeout(pending)
+  pending && clearTimeout(pending)
   pending = setTimeout(() => {
     pending = null
     void (async() => {
@@ -55,7 +55,7 @@ export const scheduleAutocheck = (label: string): void => {
       }
       seq += 1
       records.push({ at: new Date().toISOString(), seq, durationMs, positionMs, state, ok: durationMs > 0 })
-      if (records.length > 20) records.shift()
+      records.length > 20 && records.shift()
       log.info(`[autocheck] #${seq} ${label} duration=${durationMs}ms position=${positionMs}ms state=${state} ok=${durationMs > 0}`)
       await flush()
     })()
