@@ -211,6 +211,47 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
       .readTimeout(20, TimeUnit.SECONDS)
       .build();
 
+  // ---------------- 一起听：native → JS 推送（绕开 JS 轮询延迟） ----------------
+
+  private volatile boolean p2pPumpRunning = false;
+  private Thread p2pPumpThread = null;
+
+  /** 启动推送泵：C++ 收到包就 emit 给 JS，JS 侧零轮询 */
+  @ReactMethod
+  public void p2pStartPump(Promise promise) {
+    if (p2pPumpRunning) {
+      promise.resolve(true);
+      return;
+    }
+    p2pPumpRunning = true;
+    p2pPumpThread = new Thread(() -> {
+      while (p2pPumpRunning) {
+        try {
+          byte[] bytes = nativeP2PPoll(80);
+          if (bytes != null && bytes.length > 0) {
+            String text = new String(bytes, "UTF-8");
+            if (reactContext != null && reactContext.hasActiveReactInstance()) {
+              reactContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                .emit("lxp2p:message", text);
+            }
+          }
+        } catch (Throwable ignored) {
+          try { Thread.sleep(20); } catch (InterruptedException e) { break; }
+        }
+      }
+    }, "lxp2p-pump");
+    p2pPumpThread.setPriority(Thread.MAX_PRIORITY);
+    p2pPumpThread.start();
+    promise.resolve(true);
+  }
+
+  @ReactMethod
+  public void p2pStopPump(Promise promise) {
+    p2pPumpRunning = false;
+    p2pPumpThread = null;
+    promise.resolve(true);
+  }
   // ---------------- 一起听：UDP 直连（纯 C++ 实现，STUN 打洞） ----------------
 
   @ReactMethod
