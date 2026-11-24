@@ -1,6 +1,7 @@
 #include "p2p_peer.h"
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <sys/resource.h>
