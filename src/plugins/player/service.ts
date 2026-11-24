@@ -9,6 +9,7 @@ import { exitApp } from '@/core/common'
 import { getCurrentTrackId } from './playList'
 import { getCueWindow } from '@/core/player/cueWindow'
 import { pause, play, playNext, playPrev } from '@/core/player/player'
+import { refreshDuration } from '@/core/init/player/playProgress'
 
 let isInitialized = false
 
@@ -95,6 +96,11 @@ const registerPlaybackService = async() => {
         // console.log('state', 'State.NONE')
         break
       case TPState.Ready:
+        // 原生 Ready：ExoPlayer 已 prepared，此刻读 duration 才是可信的（不再靠计时器猜）
+        refreshDuration()
+        global.app_event.playerPause()
+        global.app_event.pause()
+        break
       case TPState.Stopped:
       case TPState.Paused:
         global.app_event.playerPause()
