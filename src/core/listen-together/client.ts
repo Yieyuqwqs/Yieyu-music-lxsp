@@ -8,6 +8,7 @@
  */
 import { emptyClockSync, localPlayhead, mergePong, serverNowOf, type ClockSync } from './playhead'
 import { trackStableKey, type ClientMessage, type JoinResult, type PlaybackMode, type RoomState, type ServerMessage, type TrackRef } from './protocol'
+import { reportError } from '@/core/listen-together/errors'
 
 export type ListenTogetherEvent =
   | { type: 'open' }
@@ -88,7 +89,7 @@ export class ListenTogetherClient {
 
   private emit(event: ListenTogetherEvent): void {
     for (const listener of this.listeners) {
-      try { listener(event) } catch (error) { /* 单个订阅者出错不影响别人 */ }
+      try { listener(event) } catch (error) { reportError('client:emit', error) }
     }
   }
 
@@ -223,7 +224,7 @@ export class ListenTogetherClient {
     this.manualClose = true
     this.stopPing()
     if (this.ws) {
-      try { this.ws.close(1000, 'client leave') } catch (error) { /* 已经断了 */ }
+      try { this.ws.close(1000, 'client leave') } catch (error) { reportError('client:close', error) }
       this.ws = null
     }
   }
@@ -282,7 +283,7 @@ export class ListenTogetherClient {
 
   private sendRaw(message: ClientMessage): void {
     if (!this.ws) return
-    try { this.ws.send(JSON.stringify(message)) } catch (error) { /* 断了就算了 */ }
+    try { this.ws.send(JSON.stringify(message)) } catch (error) { reportError('client:send', error) }
   }
 
   // 控制端
