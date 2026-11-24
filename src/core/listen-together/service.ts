@@ -608,47 +608,49 @@ class ListenTogetherService {
     }
   }
 
-  /**
-   * 播放自检（宪法第十一条）：在 App 内部真实跑一遍「探测 → 播放」，然后读回 ExoPlayer 的
-   * duration / isPlaying 写进自己的日志文件（设置页「查看日志」可见）。
-   * 这是无 adb 环境下的运行时证据。
-   */
-  async runPlaybackSelfTest(): Promise<void> {
+  /** 自检结果（给 UI 弹窗用）：一次自检的完整证据 */
+  async runPlaybackSelfTest(): Promise<{ ok: boolean, durationMs: number, positionMs: number, state: string, probe: { status: number, bytes: number, type: string } | null, url: string, error: string | null }> {
     const track = createPlayerAdapter().currentTrack()
     if (!track) {
-      this.update({ lastError: '自检：当前没有在播的歌，先放一首' })
-      return
+      this.update({ lastError: '自检：当前没有在播的歌' })
+      return { ok: false, durationMs: 0, positionMs: 0, state: 'none', probe: null, url: '', error: '当前没有在播的歌' }
     }
     const probe = track.url ? await this.probeMediaUrl(track.url) : null
-    this.update({
-      lastEvent: `自检：probe=${probe ? `${probe.ok}/${probe.status}/${probe.bytes}B` : '无直链'}，开始播放验证…`,
-    })
+    this.update({ lastEvent: `自检：probe=${probe ? `${probe.status}/${probe.bytes}B` : '无直链'}，开始播放验证…` })
     const info = toNewMusicInfo({
-      source: track.source,
-      name: track.name,
-      singer: track.singer,
-      songmid: track.id,
-      interval: '',
-      albumName: '',
-      img: '',
-      types: this.placeholderTypes(),
-      _types: this.placeholderTypes(),
+      source: track.source, name: track.name, singer: track.singer, songmid: track.id,
+      interval: '', albumName: '', img: '',
+      types: this.placeholderTypes(), _types: this.placeholderTypes(),
     })
     setPlayMusicInfo(null, info, true)
     setMusicUrl(info as never)
     startPlaybackSampling()
     await new Promise((resolve) => setTimeout(resolve, 4000))
+    let durationMs = 0
+    let positionMs = 0
+    let state = 'unknown'
+    let error: string | null = null
     try {
-      const duration = await TrackPlayer.getDuration()
-      const position = await TrackPlayer.getPosition()
-      const state = await TrackPlayer.getPlaybackState()
-      this.update({
-        lastEvent: `自检结果：duration=${(duration ?? 0).toFixed(2)}s position=${(position ?? 0).toFixed(2)}s state=${String((state as { state?: unknown })?.state ?? '?')}`,
-        lastError: (duration ?? 0) > 0 ? null : '自检：duration=0，播放器没拿到媒体信息',
-      })
-    } catch (error) {
-      reportError('selftest', error)
-      this.update({ lastError: `自检异常：${(error as Error).message}` })
+      durationMs = Math.round((await TrackPlayer.getDuration()) ?? 0)
+      positionMs = Math.round((await TrackPlayer.getPosition()) ?? 0)
+      state = String((await TrackPlayer.getPlaybackState() as { state?: unknown })?.state ?? '?')
+    } catch (err) {
+      error = (err as Error).message
+      reportError('selftest', err)
+    }
+    const ok = durationMs > 0 && error == null
+    this.update({
+      lastEvent: `自检结果：duration=${durationMs}ms position=${positionMs}ms state=${state}`,
+      lastError: ok ? null : `自检失败：duration=${durationMs}ms${error ? ` err=${error}` : ''}`,
+    })
+    return {
+      ok,
+      durationMs,
+      positionMs,
+      state,
+      probe: probe ? { status: probe.status, bytes: probe.bytes, type: probe.type } : null,
+      url: track.url ?? '',
+      error,
     }
   }
 
