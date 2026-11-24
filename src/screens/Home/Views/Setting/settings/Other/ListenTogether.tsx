@@ -119,6 +119,33 @@ export default memo(() => {
       {inRoom
         ? (
           <View style={styles.group}>
+            <Text size={13} color={theme['c-font-label']}>{`共享队列（${status.queue.length}）—— 谁都能加，实时同步`}</Text>
+            {status.queue.length === 0
+              ? <Text size={12} color={theme['c-500']} style={styles.hint}>还没有歌。放一首歌后点下面「把当前歌曲加入队列」。</Text>
+              : status.queue.map((track, index) => (
+                <View key={track.stableKey} style={styles.queueRow}>
+                  <Text
+                    size={12}
+                    color={index === status.currentIndex ? theme['c-font'] : theme['c-500']}
+                    onPress={() => listenTogether.playQueueIndex(index)}
+                    style={styles.queueText}
+                  >
+                    {`${index === status.currentIndex ? '▶ ' : ''}${index + 1}. ${track.name} - ${track.singer}`}
+                  </Text>
+                  <Text size={12} color={theme['c-500']} onPress={() => listenTogether.removeFromQueue(track.stableKey)}>
+                    {`删除`}
+                  </Text>
+                </View>
+              ))}
+            <View style={styles.btnRow}>
+              <Button onPress={() => listenTogether.addCurrentToQueue()}>把当前歌曲加入队列</Button>
+            </View>
+          </View>
+        )
+        : null}
+      {inRoom
+        ? (
+          <View style={styles.group}>
             <Text size={13} color={theme['c-font-label']}>{`成员（${status.members.length}）`}</Text>
             {status.members.map(member => (
               <Text key={member.memberId} size={12} color={theme['c-500']} style={styles.member}>
@@ -173,5 +200,7 @@ const styles = createStyle({
   },
   btnRow: { marginTop: 10, flexDirection: 'row', flexWrap: 'wrap' },
   member: { marginTop: 4 },
+  queueRow: { marginTop: 6, flexDirection: 'row', alignItems: 'center' },
+  queueText: { flex: 1, lineHeight: 18 },
   hint: { marginTop: 6, lineHeight: 16 },
 })
