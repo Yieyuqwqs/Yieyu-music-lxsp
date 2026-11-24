@@ -4,7 +4,7 @@
  * 极简交互：填服务器 → 建房或加入 → 看成员 → 控制端直接控，成员端「申请」。
  * 音频永远不经服务端，这里只同步「放什么、放到哪」。
  */
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { Component, memo, useCallback, useEffect, useState } from 'react'
 import { TextInput, View } from 'react-native'
 import Clipboard from '@react-native-clipboard/clipboard'
 
@@ -17,7 +17,30 @@ import { updateSetting } from '@/core/common'
 import { listenTogether, type RoomStatus } from '@/core/listen-together'
 import { useTheme } from '@/store/theme/hook'
 
-export default memo(() => {
+/** 面板级错误边界：一起听出问题只影响这一块，不再让设置页白屏 */
+class PanelBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <View style={styles.group}>
+          <Text size={13} color="#e5484d">{`一起听面板出错：${this.state.error.message}`}</Text>
+          <Text size={12} style={styles.hint}>点下面按钮重试；播放不受影响。</Text>
+          <View style={styles.btnRow}>
+            <Button onPress={() => this.setState({ error: null })}>重试面板</Button>
+          </View>
+        </View>
+      )
+    }
+    return this.props.children
+  }
+}
+const PanelContent = memo(() => {
   const theme = useTheme()
   const savedServer = useSettingValue('common.listenTogetherServer')
   const savedRoom = useSettingValue('common.listenTogetherRoom')
@@ -206,6 +229,12 @@ export default memo(() => {
     </SubTitle>
   )
 })
+
+export default memo(() => (
+  <PanelBoundary>
+    <PanelContent />
+  </PanelBoundary>
+))
 
 const styles = createStyle({
   group: { marginTop: 10 },
