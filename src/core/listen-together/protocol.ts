@@ -83,3 +83,16 @@ export type ServerMessage =
   | ServerRejectMessage | ServerErrorMessage | ServerMemberMessage
 
 export const trackStableKey = (source: string, id: string): string => `${source}:${id}`
+
+export const emptyPlayback = (): PlaybackState => ({
+  positionMs: 0,
+  anchorServerMs: 0,
+  isPlaying: false,
+  trackStableKey: null,
+})
+
+export const defaultSettings = (): RoomSettings => ({
+  allowListenerRequests: true,
+  requireHostOnline: true,
+  maxMembers: 8,
+})
