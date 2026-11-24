@@ -206,23 +206,11 @@ const PanelContent = memo(() => {
         )
         : null}
 
-      {inRoom
+      {inRoom && !isController
         ? (
           <View style={styles.btnRow}>
-            {isController
-              ? (
-                <>
-                  <Button onPress={() => listenTogether.pushPlay()}>同步播放</Button>
-                  <Button onPress={() => listenTogether.pushPause()}>同步暂停</Button>
-                  <Button onPress={() => listenTogether.pushTrack()}>同步当前歌曲</Button>
-                </>
-              )
-              : (
-                <>
-                  <Button onPress={() => listenTogether.requestPlay()}>申请播放</Button>
-                  <Button onPress={() => listenTogether.requestPause()}>申请暂停</Button>
-                </>
-              )}
+            <Button onPress={() => listenTogether.requestPlay()}>申请播放</Button>
+            <Button onPress={() => listenTogether.requestPause()}>申请暂停</Button>
           </View>
         )
         : null}
