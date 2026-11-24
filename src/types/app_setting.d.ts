@@ -38,6 +38,12 @@ declare global {
        */
       'common.wasmPlugins': string
 
+      /** 一起听服务器地址（Cloudflare Worker 部署后的 https 地址） */
+      'common.listenTogetherServer': string
+
+      /** 上次加入的房间号，方便重连 */
+      'common.listenTogetherRoom': string
+
 
 
       /**
