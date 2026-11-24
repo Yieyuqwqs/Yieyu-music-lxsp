@@ -1,3 +1,4 @@
+import { reportError } from '@/core/listen-together/errors'
 /**
  * 极简 MQTT 3.1.1 over WebSocket（只做 qos0 的 pub/sub + keepalive）
  *
@@ -23,7 +24,7 @@ const textEncoder = {
   decode: (bytes: Uint8Array): string => {
     let out = ''
     for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i])
-    try { return decodeURIComponent(escape(out)) } catch (error) { return out }
+    try { return decodeURIComponent(escape(out)) } catch (error) { reportError('mqtt:utf8', error); return out }
   },
 }
 
@@ -172,7 +173,7 @@ export class MqttClient {
         if (qos === 1) {
           // 回 PUBACK（报文类型 4）
           const id = (body[2 + topicLen] << 8) | body[3 + topicLen]
-          try { this.ws?.send(Uint8Array.from([0x40, 0x02, (id >> 8) & 0xff, id & 0xff])) } catch (error) { /* 忽略 */ }
+          try { this.ws?.send(Uint8Array.from([0x40, 0x02, (id >> 8) & 0xff, id & 0xff])) } catch (error) { reportError('mqtt:puback', error) }
         }
         this.options.onMessage?.(topic, payload)
       } else if (type === 4) {
@@ -194,12 +195,12 @@ export class MqttClient {
     this.topics.delete(topic)
     if (!this.ready || !this.ws) return
     const body = [0x00, 0x02, ...utf8Field(topic)]
-    try { this.ws.send(packet(0xa2, body)) } catch (error) { /* 忽略 */ }
+    try { this.ws.send(packet(0xa2, body)) } catch (error) { reportError('mqtt:unsubscribe', error) }
   }
 
   private sendSubscribe(topic: string): void {
     if (!this.ws) return
-    try { this.ws.send(packet(0x82, [0x00, 0x01, ...utf8Field(topic), 0x01])) } catch (error) { /* 忽略 */ }
+    try { this.ws.send(packet(0x82, [0x00, 0x01, ...utf8Field(topic), 0x01])) } catch (error) { reportError('mqtt:subscribe', error) }
   }
 
   publish(topic: string, payload: string): boolean {
@@ -214,6 +215,7 @@ export class MqttClient {
       setTimeout(() => { this.inflight.delete(id) }, 10_000)
       return true
     } catch (error) {
+      reportError('mqtt:publish', error)
       return false
     }
   }
@@ -222,7 +224,7 @@ export class MqttClient {
     this.stopPing()
     this.pingTimer = setInterval(() => {
       if (!this.ready || !this.ws) return
-      try { this.ws.send(Uint8Array.from([0xc0, 0x00])) } catch (error) { /* 忽略 */ }
+      try { this.ws.send(Uint8Array.from([0xc0, 0x00])) } catch (error) { reportError('mqtt:ping', error) }
     }, Math.max(5, Math.floor(this.keepaliveSeconds / 2)) * 1000)
   }
 
@@ -239,7 +241,7 @@ export class MqttClient {
     this.stopPing()
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null }
     if (this.ws) {
-      try { this.ws.send(Uint8Array.from([0xe0, 0x00])); this.ws.close() } catch (error) { /* 忽略 */ }
+      try { this.ws.send(Uint8Array.from([0xe0, 0x00])); this.ws.close() } catch (error) { reportError('mqtt:close', error) }
       this.ws = null
     }
   }
