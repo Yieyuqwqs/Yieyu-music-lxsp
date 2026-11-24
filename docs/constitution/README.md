@@ -17,6 +17,7 @@
 | 11 | 严禁温室测试 | Mock 不算通过；要真链路/真数据/真日志 | [11-no-greenhouse-testing.md](./11-no-greenhouse-testing.md) | live.test.mjs + 豁免标注 |
 | 12 | 禁止把锅甩给人类 | 不许要求用户验证；每轮自带验证输出 | [12-no-blame-shifting.md](./12-no-blame-shifting.md) | self-verify.sh + audit |
 | 13 | 自检条款 | 前十二条任一触犯即交付失败 | [13-self-audit.md](./13-self-audit.md) | constitution-audit.mjs |
+| 14 | 禁改规则/脚本/CI | 改来变绿＝作弊，最高死刑 | [14-no-self-modifying-rules.md](./14-no-self-modifying-rules.md) | 人工审查（本条禁止自改） |
 
 ## 执行顺序（每次改动）
 
