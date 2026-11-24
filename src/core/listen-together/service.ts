@@ -441,6 +441,10 @@ class ListenTogetherService {
       //   一旦这条直链在对方网络不可取（防盗链/签名过期），ExoPlayer 加载失败，
       //   表现就是主界面 00:00/00:00 无法播放，而房间状态已经推进（图一 00:25、图二 00:00）。
       if (track.url && /^https?:\/\//i.test(track.url)) {
+        const media = await this.probeMediaUrl(track.url)
+        if (!media.ok) {
+          this.update({ lastEvent: `房间直链不可用（http=${media.status} 字节=${media.bytes}），改用本机解析：${track.name}` })
+        } else {
         const info = toNewMusicInfo({
           source: track.source,
           name: track.name,
@@ -452,11 +456,12 @@ class ListenTogetherService {
           types: this.placeholderTypes(),
           _types: this.placeholderTypes(),
         })
-        rememberResolvedUrl(info as never, track.url)
-        setPlayMusicInfo(null, info, true)
-        setMusicUrl(info as never)
-        this.update({ lastError: null, lastEvent: `按房间直链播放：${track.name}` })
-        return true
+          rememberResolvedUrl(info as never, track.url)
+          setPlayMusicInfo(null, info, true)
+          setMusicUrl(info as never)
+          this.update({ lastError: null, lastEvent: `按房间直链播放：${track.name}（已验证 ${media.status}/${media.bytes}B）` })
+          return true
+        }
       }
 
       // 次优：房间给的 source:id 就是平台歌曲 ID，还原成在线曲目交给播放器
@@ -573,6 +578,33 @@ class ListenTogetherService {
     void this.pushTrackWithUrl()
   }
   /** 房间播放头（毫秒）：p2p/http 各自算，UI 每秒取一次 */
+
+  /**
+   * 播放前先验证房间直链可用（结构：不可用的链接绝不交给播放器）。
+   *
+   * 根因：之前把房间直链直接塞给播放器，链接在对方网络被 CDN 拒绝时，
+   * ExoPlayer 加载失败 → 主界面 00:00/00:00 且不报错。
+   */
+  private async probeMediaUrl(url: string): Promise<{ ok: boolean, status: number, bytes: number, type: string }> {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    const timer = controller ? setTimeout(() => controller.abort(), 2500) : null
+    try {
+      const response = await fetch(url, {
+        headers: { Range: 'bytes=0-1023' },
+        signal: controller?.signal,
+      })
+      const buffer = await response.arrayBuffer()
+      const type = response.headers.get('content-type') ?? ''
+      const ok = (response.status === 200 || response.status === 206) &&
+        buffer.byteLength > 512 && !/text\/html/i.test(type)
+      return { ok, status: response.status, bytes: buffer.byteLength, type }
+    } catch (error) {
+      reportError('media-probe', error)
+      return { ok: false, status: 0, bytes: 0, type: '' }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
 
   /** 把当前正在播的歌加进共享队列（谁都能加） */
   /** 我是房主吗（p2p 看角色，http 看客户端身份） */
