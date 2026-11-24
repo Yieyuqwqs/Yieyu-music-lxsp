@@ -1,5 +1,8 @@
 #pragma once
 
+#include <sys/socket.h>
+#include <sys/types.h>
+
 #include <atomic>
 #include <cstdint>
 #include <deque>
