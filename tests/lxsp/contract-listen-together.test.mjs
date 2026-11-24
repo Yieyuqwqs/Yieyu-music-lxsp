@@ -71,7 +71,14 @@ export default (t) => {
 
   t.suite('契约：status 里的字段在初始状态里都要有值（避免 undefined 崩 UI）', () => {
     const initStart = service.indexOf('private status: RoomStatus = {')
-    const initEnd = service.indexOf('}', initStart)
+    // 初值里有嵌套对象（engine/direct），必须花括号配对
+    let depth = 0
+    let initEnd = initStart
+    for (let i = initStart; i < service.length; i++) {
+      const ch = service[i]
+      if (ch === '{') depth++
+      else if (ch === '}') { depth--; if (depth === 0) { initEnd = i + 1; break } }
+    }
     const init = service.slice(initStart, initEnd)
     const missing = [...fields].filter(field => !new RegExp(`\\b${field}\\s*:`).test(init))
     t.eq(missing, [], `初始状态缺字段：${missing.join(', ')}`)
