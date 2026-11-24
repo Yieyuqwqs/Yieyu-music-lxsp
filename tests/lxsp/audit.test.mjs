@@ -66,6 +66,8 @@ export default (t) => {
     t.ok(text.includes('诚实高于好看'), '第八条')
     t.ok(text.includes('改动清单纪律'), '第九条')
     t.ok(/性质只能是不变量、幂等、结构重构/.test(text), '第九条-禁止清单')
+    t.ok(text.includes('CI 必须解析到每一个模块'), '第十条')
+    t.ok(text.includes('禁止用正则批量改写源码'), '第十条-禁止正则批量改')
   })
 
   t.suite('审计：播放器钩子不会被异步清理抹掉（会话代际）', () => {
