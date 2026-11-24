@@ -122,12 +122,26 @@ class ListenTogetherService {
 
   /** 建房并成为控制端 */
   async createRoom(): Promise<JoinResult> {
-    const client = this.ensureClient()
-    const roomId = await client.createRoom()
-    return this.join(roomId)
+    try {
+      const client = this.ensureClient()
+      const roomId = await client.createRoom()
+      return await this.join(roomId)
+    } catch (error) {
+      this.update({ lastError: `建房失败：${(error as Error).message}` })
+      throw error
+    }
   }
 
   async join(roomId: string): Promise<JoinResult> {
+    try {
+      return await this.joinInner(roomId)
+    } catch (error) {
+      this.update({ lastError: `加入失败：${(error as Error).message}` })
+      throw error
+    }
+  }
+
+  private async joinInner(roomId: string): Promise<JoinResult> {
     const client = this.ensureClient()
     const session = await client.joinRoom(roomId.trim())
     this.installPlayerHooks()
