@@ -646,6 +646,8 @@ class ListenTogetherService {
   private resolving = new Set<string>()
   /** 已经预热过的直链（避免重复占用流量） */
   private warmed = new Set<string>()
+  /** 解析失败的曲目 → 下次允许重试的时间（退避 60 秒，避免每 3 秒一次的无用请求） */
+  private resolveFailedAt = new Map<string, number>()
   /** 预缓冲轨的 id 前缀（绝不与 App 自己的 track id 冲突） */
   private readonly PRELOAD_TRACK_PREFIX = 'lxp2p_preload_'
   /** 预加载窗口：当前曲目后面几首要提前解析好直链 */
@@ -659,6 +661,8 @@ class ListenTogetherService {
     for (const track of window_) {
       if (track.url) continue
       if (this.resolving.has(track.stableKey)) continue
+      const failedAt = this.resolveFailedAt.get(track.stableKey)
+      if (failedAt && Date.now() - failedAt < 60_000) continue
       if (!track.source || !track.id || track.source === 'local') continue
       this.resolving.add(track.stableKey)
       void (async() => {
@@ -669,13 +673,15 @@ class ListenTogetherService {
           })
           const url = await getMusicUrl({ musicInfo: info as never })
           if (url && /^https?:\/\//i.test(url)) {
+            this.resolveFailedAt.delete(track.stableKey)
             rememberResolvedUrl(info as never, url)
             room.shareUrl(track.stableKey, url)
             void this.warmUpUrl(url)
             this.update({ lastEvent: `队列已备好直链：${track.name}` })
           }
         } catch (error) {
-          // 解析不了就算了，播放时再尝试一次
+          // 记一次失败时间，60 秒内不再重试（播放时仍会尝试）
+          this.resolveFailedAt.set(track.stableKey, Date.now())
         } finally {
           this.resolving.delete(track.stableKey)
         }
