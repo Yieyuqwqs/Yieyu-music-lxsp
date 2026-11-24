@@ -471,6 +471,15 @@ class ListenTogetherService {
   pushTrack(): void {
     void this.pushTrackWithUrl()
   }
+  /** 房间播放头（毫秒）：p2p/http 各自算，UI 每秒取一次 */
+  playheadMs(): number {
+    try {
+      if (this.p2p) return this.p2p.playheadMs()
+      if (this.client) return this.client.playheadMs()
+    } catch (error) { /* 忽略，退回快照值 */ }
+    return this.status.positionMs
+  }
+
   /** 把当前正在播的歌加进共享队列（谁都能加） */
   addCurrentToQueue(): void {
     const track = createPlayerAdapter().currentTrack()
