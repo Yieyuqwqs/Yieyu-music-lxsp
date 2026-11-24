@@ -16,6 +16,7 @@ add_library(yieyu_core SHARED
     state/state_box.cpp
     ${SQLITE_DIR}/sqlite3.c
     wasm/wasm_runtime.cpp
+    clock/clock_bridge.cpp
     ${WASM3_DIR}/m3_core.c
     ${WASM3_DIR}/m3_env.c
     ${WASM3_DIR}/m3_parse.c
