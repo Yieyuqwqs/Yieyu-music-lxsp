@@ -7,11 +7,12 @@
 import playerState from '@/store/player/state'
 import settingState from '@/store/setting/state'
 import { play, pause } from '@/core/player/player'
-import { setCurrentTime, setResource, setPlay } from '@/plugins/player/utils'
+import { setCurrentTime, setResource, setPlay, setPlaybackRate } from '@/plugins/player/utils'
 import { setPlayMusicInfo } from '@/core/player/playInfo'
 import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
 import { P2PRoom, makeRoomId } from './p2p-room'
+import { getResolvedUrl, getLastResolvedUrl } from './resolved-url'
 import { setPlayerHooks } from '@/core/player/hooks'
 import { getList } from '@/core/player/playInfo'
 import { playListById, setMusicUrl } from '@/core/player/player'
@@ -43,6 +44,7 @@ const createPlayerAdapter = (): PlayerAdapter => ({
   seek: (positionMs: number) => { void setCurrentTime(positionMs / 1000) },
   isPlaying: () => playerState.isPlay,
   positionMs: () => Math.max(0, playerState.progress.nowPlayTime * 1000),
+  setRate: (rate: number) => { void setPlaybackRate(rate) },
   currentTrack: () => {
     const musicInfo = playerState.playMusicInfo.musicInfo
     if (!musicInfo) return null
@@ -402,11 +404,14 @@ class ListenTogetherService {
       this.update({ lastError: '当前没有在播的歌，无法同步' })
       return
     }
-    let url: string | undefined
-    try {
-      const active = await TrackPlayer.getActiveTrack() as { url?: string } | undefined
-      url = active?.url
-    } catch (error) { /* 取不到就不带直链，退回按 id 还原 */ }
+    // 先看解析登记表（最可靠），再退回播放器内部状态
+    let url: string | undefined = getResolvedUrl(base.source, base.id) ?? getLastResolvedUrl() ?? undefined
+    if (!url) {
+      try {
+        const active = await TrackPlayer.getActiveTrack() as { url?: string } | undefined
+        url = active?.url
+      } catch (error) { /* 取不到就不带直链，退回按 id 还原 */ }
+    }
     const track = url ? { ...base, url } : base
     if (this.p2p) this.p2p.control('SET_TRACK', { track })
     else this.session?.notifyTrackChanged(track)
