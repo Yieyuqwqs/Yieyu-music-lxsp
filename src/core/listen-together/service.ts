@@ -196,8 +196,25 @@ class ListenTogetherService {
   /** 免部署模式：房主自己就是服务端 */
   private p2p: P2PRoom | null = null
 
-  private startP2P(roomId: string, role: 'host' | 'guest'): void {
+  /** 原子地重置所有会话资源（切房/切模式/离开都走它，避免旧实例继续广播） */
+  private async resetSession(): Promise<void> {
     this.p2p?.close()
+    this.p2p = null
+    if (this.stopSyncPump) { this.stopSyncPump(); this.stopSyncPump = null }
+    this.scheduled.clear()
+    this.lastGuestTrackKey = null
+    await this.clearPreloads().catch(() => {})
+    this.session?.stop()
+    this.session = null
+    this.client?.disconnect()
+    this.client = null
+    this.clientBaseUrl = ''
+    setPlayerHooks({})
+    this.hooksInstalled = false
+  }
+
+  private startP2P(roomId: string, role: 'host' | 'guest'): void {
+    void this.resetSession()
     const room = new P2PRoom({
       roomId,
       role,
@@ -210,7 +227,7 @@ class ListenTogetherService {
         void pushAnchor(state.playback, serverNow)
         this.update({
           state,
-          roomId: state.roomId,
+          roomId: this.status.roomId ?? roomId,
           role: state.members.find(m => m.memberId === room.memberId)?.role ?? (role === 'host' ? 'CONTROLLER' : 'LISTENER'),
           memberId: room.memberId,
           members: state.members.map(m => ({ memberId: m.memberId, role: m.role, online: m.online })),
