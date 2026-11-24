@@ -356,12 +356,6 @@ export class P2PRoom {
     this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'SYNC_REQUEST', from: this.memberId }))
   }
 
-  /** 把解析好的直链分享给房间（谁解析出来都行） */
-  shareUrl(stableKey: string, url: string): void {
-    if (!stableKey || !/^https?:\/\//i.test(url)) return
-    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({ type: 'URL_SHARE', stableKey, url, from: this.memberId }))
-  }
-
   /** 共享队列：加歌（成员发消息，房主落状态） */
   queueAdd(tracks: TrackRef[]): void {
     if (!tracks.length) return
