@@ -6,6 +6,7 @@
  */
 import { DeviceEventEmitter, NativeModules } from 'react-native'
 import { monotonicMs } from './clockrt'
+import { reportError } from '@/core/listen-together/errors'
 
 interface SyncModule {
   syncSetAnchor?: (positionMs: number, anchorMonoUs: number, playing: boolean) => Promise<boolean>
@@ -39,7 +40,7 @@ export const pushAnchor = async(playback: { positionMs: number, anchorServerMs: 
     const nowUs = native.syncNowUs ? await native.syncNowUs() : monotonicMs() * 1000
     const anchorMonoUs = nowUs - (serverNow - playback.anchorServerMs) * 1000
     await native.syncSetAnchor(Math.max(0, playback.positionMs), anchorMonoUs, playback.isPlaying)
-  } catch (error) { /* 忽略 */ }
+  } catch (error) { reportError('sync:锚点下发', error) }
 }
 
 /** 当前播放头（毫秒）。原生不可用时用 JS 单调时钟算 */
@@ -54,24 +55,24 @@ export const syncPlayheadMs = (fallback: () => number): number => {
 
 export const syncLeadMs = async(): Promise<number | null> => {
   if (!native?.syncLeadMs) return null
-  try { return Number(await native.syncLeadMs()) } catch (error) { return null }
+  try { return Number(await native.syncLeadMs()) } catch (error) { reportError('sync:读取提前量', error); return null }
 }
 
 export const syncClear = async(): Promise<void> => {
   if (!native?.syncClear) return
-  try { await native.syncClear() } catch (error) { /* 忽略 */ }
+  try { await native.syncClear() } catch (error) { reportError('sync:清理', error) }
 }
 
 
 /** 原生定时：到点由 C++ 线程叫醒，JS 只负责执行（误差 <1ms，JS 定时器是 10–50ms） */
 export const scheduleNative = async(commandId: number, delayMs: number): Promise<boolean> => {
   if (!native?.syncSchedule) return false
-  try { return await native.syncSchedule(commandId, Math.max(0, Math.round(delayMs))) } catch (error) { return false }
+  try { return await native.syncSchedule(commandId, Math.max(0, Math.round(delayMs))) } catch (error) { reportError('sync:调度', error); return false }
 }
 
 export const cancelNative = async(commandId: number): Promise<void> => {
   if (!native?.syncCancel) return
-  try { await native.syncCancel(commandId) } catch (error) { /* 忽略 */ }
+  try { await native.syncCancel(commandId) } catch (error) { reportError('sync:取消', error) }
 }
 
 /** 订阅原生到点事件 */
