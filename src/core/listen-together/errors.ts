@@ -20,7 +20,7 @@ export const reportError = (scope: string, error: unknown): void => {
   const message = error instanceof Error ? error.message : String(error)
   const item: ReportedError = { scope, message, at: Date.now() }
   ring.push(item)
-  if (ring.length > MAX) ring.shift()
+  ring.length > MAX && ring.shift()
   for (const listener of listeners) listener(item)
 }
 
