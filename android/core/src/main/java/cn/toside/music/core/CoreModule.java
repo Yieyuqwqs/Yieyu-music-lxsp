@@ -211,6 +211,81 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
       .readTimeout(20, TimeUnit.SECONDS)
       .build();
 
+  // ---------------- 一起听：UDP 直连（纯 C++ 实现，STUN 打洞） ----------------
+
+  @ReactMethod
+  public void p2pStart(String stunHost, int stunPort, int timeoutMs, Promise promise) {
+    try {
+      promise.resolve(nativeP2PStart(stunHost == null ? "stun.l.google.com" : stunHost, stunPort, timeoutMs));
+    } catch (Throwable error) {
+      promise.reject("E_P2P", error);
+    }
+  }
+
+  @ReactMethod
+  public void p2pLocalIp(Promise promise) {
+    try {
+      promise.resolve(nativeP2PLocalIp());
+    } catch (Throwable error) {
+      promise.reject("E_P2P", error);
+    }
+  }
+
+  @ReactMethod
+  public void p2pConnect(String ip, int port, Promise promise) {
+    try {
+      promise.resolve(nativeP2PConnect(ip, port));
+    } catch (Throwable error) {
+      promise.reject("E_P2P", error);
+    }
+  }
+
+  @ReactMethod
+  public void p2pSend(String text, Promise promise) {
+    try {
+      byte[] bytes = text == null ? new byte[0] : text.getBytes("UTF-8");
+      promise.resolve(nativeP2PSend(bytes));
+    } catch (Throwable error) {
+      promise.reject("E_P2P", error);
+    }
+  }
+
+  @ReactMethod
+  public void p2pPoll(int timeoutMs, Promise promise) {
+    try {
+      byte[] bytes = nativeP2PPoll(timeoutMs);
+      promise.resolve(bytes == null ? "" : new String(bytes, "UTF-8"));
+    } catch (Throwable error) {
+      promise.reject("E_P2P", error);
+    }
+  }
+
+  @ReactMethod
+  public void p2pStats(Promise promise) {
+    try {
+      promise.resolve(nativeP2PStats());
+    } catch (Throwable error) {
+      promise.reject("E_P2P", error);
+    }
+  }
+
+  @ReactMethod
+  public void p2pStop(Promise promise) {
+    try {
+      nativeP2PStop();
+      promise.resolve(true);
+    } catch (Throwable error) {
+      promise.reject("E_P2P", error);
+    }
+  }
+
+  private static native String nativeP2PStart(String host, int port, int timeoutMs);
+  private static native String nativeP2PLocalIp();
+  private static native boolean nativeP2PConnect(String ip, int port);
+  private static native boolean nativeP2PSend(byte[] payload);
+  private static native byte[] nativeP2PPoll(int timeoutMs);
+  private static native String nativeP2PStats();
+  private static native void nativeP2PStop();
   /** 单调时钟（纳秒）：一起听做对齐/时延计算用，不受系统校时影响 */
   @ReactMethod
   public void nowMonotonicNs(Promise promise) {
