@@ -20,6 +20,11 @@ const delaySavePlayInfo = throttleBackgroundTimer(() => {
   })
 }, 2000)
 
+let refreshDurationImpl: (() => void) | null = null
+
+/** 由原生 PlaybackState=Ready 事件调用：此刻 ExoPlayer 一定已 prepared，duration 可信 */
+export const refreshDuration = () => { refreshDurationImpl?.() }
+
 export default () => {
   // const updateMusicInfo = useCommit('list', 'updateMusicInfo')
 
@@ -89,6 +94,8 @@ export default () => {
       })()
     }, [300, 800, 1500, 2500, 4000][Math.min(attempt, 4)])
   }
+
+  refreshDurationImpl = () => { void getMaxTime() }
 
   const getMaxTime = async() => {
     const win = getCueWindow()
