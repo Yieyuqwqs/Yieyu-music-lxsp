@@ -99,6 +99,15 @@ export default (t) => {
     }
   })
 
+  t.suite('审计：duration 只允许事件驱动，禁止计时器兜底（宪法第一条）', () => {
+    const progress = read('src/core/init/player/playProgress.ts')
+    const playerService = read('src/plugins/player/service.ts')
+    t.ok(!/scheduleMaxTimeRetry/.test(progress), '不得再有计时器重试')
+    t.ok(!progress.includes('maxPlayTime > 0) void getMaxTime'), '不得再有每秒自愈')
+    t.ok(progress.includes('export const refreshDuration'), '必须暴露事件驱动入口')
+    t.ok(/case TPState\.Ready:[\s\S]{0,200}refreshDuration\(\)/.test(playerService), 'Ready 必须调用 refreshDuration')
+  })
+
   t.suite('审计：契约测试在位', () => {
     t.ok(existsSync(fileURLToPath(new URL('./contract-listen-together.test.mjs', import.meta.url))), '契约测试存在')
   })
