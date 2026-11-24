@@ -4,7 +4,7 @@
  * 只传控制消息（几十字节），不传音频。拿到直连就用它，拿不到就自动退回 MQTT。
  * 这一层就是「F1 引擎」：没有 broker 中转，消息直接打到对方手机上。
  */
-import { NativeModules } from 'react-native'
+import { DeviceEventEmitter, NativeModules } from 'react-native'
 
 interface P2PModule {
   p2pStart?: (host: string, port: number, timeoutMs: number) => Promise<string>
@@ -14,6 +14,8 @@ interface P2PModule {
   p2pPoll?: (timeoutMs: number) => Promise<string>
   p2pStats?: () => Promise<string>
   p2pStop?: () => Promise<boolean>
+  p2pStartPump?: () => Promise<boolean>
+  p2pStopPump?: () => Promise<boolean>
 }
 
 const native = (NativeModules as { YieyuCore?: P2PModule }).YieyuCore
@@ -84,4 +86,21 @@ export const directStop = async(): Promise<void> => {
   try {
     await native.p2pStop()
   } catch (error) { /* 忽略 */ }
+}
+
+
+/**
+ * 原生推送：C++ 收到包后由 Java 泵直接 emit 给 JS。
+ * 比 JS 轮询快 0–300ms（轮询间隔那一段全没了），热路径上这是最值钱的一刀。
+ */
+export const startDirectPump = (handler: (text: string) => void): (() => void) => {
+  if (!native?.p2pStartPump) return () => {}
+  const subscription = DeviceEventEmitter.addListener('lxp2p:message', (text: string) => {
+    if (typeof text === string && text) handler(text)
+  })
+  void native.p2pStartPump().catch(() => {})
+  return () => {
+    subscription.remove()
+    void native?.p2pStopPump?.().catch(() => {})
+  }
 }
