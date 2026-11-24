@@ -1,4 +1,5 @@
 import { isInitialized, initial as playerInitial, isEmpty, setPause, setPlay, setResource, setStop, initTrackInfo, setVolume } from '@/plugins/player'
+import { callOnPause, callOnPlay, callOnSeek, callOnTrackChange } from './hooks'
 import { getCueWindow, setCueWindow } from '@/core/player/cueWindow'
 import {
   setStatusText,
@@ -136,6 +137,7 @@ const getMusicPlayUrl = async(musicInfo: LX.Music.MusicInfo | LX.Download.ListIt
 }
 
 export const setMusicUrl = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem, isRefresh?: boolean) => {
+  callOnTrackChange(musicInfo)
   // addLoadTimeout()
   if (!diffCurrentMusicInfo(musicInfo)) return
   if (cancelDelayRetry) cancelDelayRetry()
@@ -635,6 +637,7 @@ export const playPrev = async(isAutoToggle = false): Promise<void> => {
  */
 export const play = () => {
   if (playerState.playMusicInfo.musicInfo == null) return
+  callOnPlay()
   if (isEmpty()) {
     if (createGettingUrlId(playerState.playMusicInfo.musicInfo) != global.lx.gettingUrlId) setMusicUrl(playerState.playMusicInfo.musicInfo)
     return
@@ -662,6 +665,7 @@ export const play = () => {
  */
 export const pause = async() => {
   await setPause()
+  callOnPause()
 }
 
 /**
