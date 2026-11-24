@@ -184,6 +184,7 @@ class ListenTogetherService {
       roomId,
       role,
       brokerUrl: this.brokerUrl(),
+      altBrokerUrl: 'wss://broker-cn.emqx.io:8084/mqtt',
       onConnected: () => this.update({ connected: true, lastError: null, roomId }),
       onDisconnected: () => this.update({ connected: false }),
       onState: (state, serverNow) => {
