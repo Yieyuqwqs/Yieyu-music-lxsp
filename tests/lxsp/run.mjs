@@ -37,6 +37,7 @@ for (const file of files) {
   const mod = await import(file)
   mod.default(t)
   if (typeof mod.enforceSuite === 'function') mod.enforceSuite(t)
+  if (typeof mod.preciseSuite === 'function') mod.preciseSuite(t)
 }
 
 let passed = 0
