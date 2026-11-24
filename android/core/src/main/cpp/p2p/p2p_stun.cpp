@@ -1,7 +1,6 @@
 #include "p2p_stun.h"
 
 #include <arpa/inet.h>
-#include <ifaddrs.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -121,21 +120,25 @@ StunResult stun_discover(const char* host, uint16_t port, int timeout_ms) {
 }
 
 std::string local_ipv4() {
-  struct ifaddrs* addrs = nullptr;
-  if (::getifaddrs(&addrs) != 0) return {};
+  // 不用 getifaddrs（NDK 里按 API 级别有条件编译，容易踩坑）：
+  // 连一个外部地址（UDP connect 不产生流量），再看本地 socket 地址即可
+  int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0) return {};
+  struct sockaddr_in probe {};
+  probe.sin_family = AF_INET;
+  probe.sin_port = htons(53);
+  ::inet_pton(AF_INET, "223.5.5.5", &probe.sin_addr);  // 阿里 DNS
   std::string found;
-  for (struct ifaddrs* it = addrs; it != nullptr; it = it->ifa_next) {
-    if (it->ifa_addr == nullptr) continue;
-    if (it->ifa_addr->sa_family != AF_INET) continue;
-    const auto* addr = reinterpret_cast<struct sockaddr_in*>(it->ifa_addr);
-    const uint32_t value = ntohl(addr->sin_addr.s_addr);
-    if ((value >> 24) == 127) continue;
-    char text[INET_ADDRSTRLEN] = {0};
-    ::inet_ntop(AF_INET, &addr->sin_addr, text, sizeof(text));
-    found = text;
-    if ((value >> 24) == 192 || (value >> 24) == 10) break;  // 优先私网
+  if (::connect(fd, reinterpret_cast<struct sockaddr*>(&probe), sizeof(probe)) == 0) {
+    struct sockaddr_in local {};
+    socklen_t len = sizeof(local);
+    if (::getsockname(fd, reinterpret_cast<struct sockaddr*>(&local), &len) == 0) {
+      char text[INET_ADDRSTRLEN] = {0};
+      ::inet_ntop(AF_INET, &local.sin_addr, text, sizeof(text));
+      found = text;
+    }
   }
-  ::freeifaddrs(addrs);
+  ::close(fd);
   return found;
 }
 
