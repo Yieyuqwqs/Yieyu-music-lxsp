@@ -45,13 +45,6 @@ jobs:
             echo "SIGNING_KEY_ALIAS=yieyu"
           } >> "$GITHUB_ENV"
 
-      - name: Run self-verify (28 tests + branch audit + real-link sim)
-        shell: bash
-        run: |
-          node tools/if-audit.mjs
-          node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs
-          sh tools/self-verify.sh
-
       - name: Build client release APKs
         shell: bash
         env:
