@@ -5,7 +5,7 @@
  * 音频永远不经服务端，这里只同步「放什么、放到哪」。
  */
 import { Component, memo, useCallback, useEffect, useState } from 'react'
-import { TextInput, View } from 'react-native'
+import { Alert, TextInput, View } from 'react-native'
 import Clipboard from '@react-native-clipboard/clipboard'
 
 import SubTitle from '../../components/SubTitle'
@@ -185,7 +185,26 @@ const PanelContent = memo(() => {
               ))}
             <View style={styles.btnRow}>
               <Button onPress={() => listenTogether.addCurrentToQueue?.()}>把当前歌曲加入队列</Button>
-              <Button onPress={() => void listenTogether.runPlaybackSelfTest?.()}>播放自检</Button>
+              <Button onPress={() => {
+                void (async() => {
+                  const result = await listenTogether.runPlaybackSelfTest?.()
+                  if (!result) return
+                  const probeLine = result.probe
+                    ? `probe http=${result.probe.status} 字节=${result.probe.bytes} 类型=${result.probe.type || '-'}`
+                    : 'probe 无直链（本机解析）'
+                  if (result.ok) {
+                    Alert.alert(
+                      '✅ 自检通过',
+                      `duration=${result.durationMs}ms  position=${result.positionMs}ms  state=${result.state}\n${probeLine}\n${result.url.slice(0, 80)}`,
+                    )
+                  } else {
+                    Alert.alert(
+                      '❌ 链路彻底失败',
+                      `duration=${result.durationMs}ms  position=${result.positionMs}ms  state=${result.state}\n${probeLine}\n错误：${result.error ?? '播放器未拿到媒体信息'}\n链接：${result.url.slice(0, 80) || '-'}`,
+                    )
+                  }
+                })()
+              }}>播放自检</Button>
             </View>
           </View>
         )
