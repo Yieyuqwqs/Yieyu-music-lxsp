@@ -53,6 +53,18 @@ export default (t) => {
     t.ok(svc.includes('resolveFailedAt'), '有解析失败退避表')
   })
 
+  t.suite('宪法：AGENTS.md 必须在仓库根且包含八条铁律', () => {
+    const text = read('AGENTS.md')
+    t.ok(text.includes('禁止补丁式开发'), '第一条')
+    t.ok(text.includes('四件套'), '第二条')
+    t.ok(text.includes('状态只有一个来源'), '第三条')
+    t.ok(text.includes('引用必须验证'), '第四条')
+    t.ok(text.includes('实测数据'), '第五条')
+    t.ok(text.includes('只修根因'), '第六条')
+    t.ok(text.includes('不许留未完成的临时方案'), '第七条')
+    t.ok(text.includes('诚实高于好看'), '第八条')
+  })
+
   t.suite('审计：契约测试在位', () => {
     t.ok(existsSync(fileURLToPath(new URL('./contract-listen-together.test.mjs', import.meta.url))), '契约测试存在')
   })
