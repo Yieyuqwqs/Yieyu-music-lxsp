@@ -15,9 +15,12 @@ let sampleTimer: ReturnType<typeof setInterval> | null = null
 
 /** 播放状态迁移：Playing / Paused / None / Ended… */
 export const logPlaybackState = (state: string, detail: Record<string, unknown> = {}): void => {
-  if (state === lastState) return
-  lastState = state
-  log.info(`${PREFIX} state=${state} ${JSON.stringify(detail)}`)
+  state === lastState
+    ? undefined
+    : (() => {
+        lastState = state
+        log.info(`${PREFIX} state=${state} ${JSON.stringify(detail)}`)
+      })()
 }
 
 /** 播放错误：连带把当前轨、时长、位置打出来，便于判定是 URL 被拒还是解码失败 */
@@ -35,8 +38,9 @@ export const logPlaybackError = async(error: unknown): Promise<void> => {
 
 /** 采样器：播放中每 2 秒记一次 duration/position，用来证明“真的在出声” */
 export const startPlaybackSampling = (): void => {
-  if (sampleTimer) return
-  sampleTimer = setInterval(() => {
+  sampleTimer
+    ? undefined
+    : (sampleTimer = setInterval(() => {
     void (async() => {
       try {
         const duration = await TrackPlayer.getDuration()
@@ -47,13 +51,11 @@ export const startPlaybackSampling = (): void => {
         log.warn(`${PREFIX} sample failed ${(error as Error).message}`)
       }
     })()
-  }, 2000)
+  }, 2000))
 }
 
 export const stopPlaybackSampling = (): void => {
-  if (!sampleTimer) return
-  clearInterval(sampleTimer)
-  sampleTimer = null
+  sampleTimer && (clearInterval(sampleTimer), (sampleTimer = null))
 }
 
 /** 播放前自检：给定 URL，验证它对 ExoPlayer 是否可播（写入日志，供人查看） */
