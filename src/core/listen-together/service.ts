@@ -191,7 +191,19 @@ class ListenTogetherService {
       requestPause: () => room.request('REQUEST_PAUSE'),
       requestSeek: (positionMs: number) => room.request('REQUEST_SEEK', { positionMs }),
     }
-    this.session = new RoomSession({ client: adapter as never, player: createPlayerAdapter() })
+    this.session = new RoomSession({
+      client: adapter as never,
+      player: createPlayerAdapter(),
+      onEvent: (event) => {
+        if (event.type === 'track_changed' && event.remote) {
+          void this.switchToTrack(event.track).then((ok) => {
+            if (!ok) this.update({ lastError: `房间切到「${event.track.name}」，本机没找到这首歌` })
+          })
+        } else if (event.type === 'error') {
+          this.update({ lastError: event.message })
+        }
+      },
+    })
     room.start()
     this.update({ roomId, memberId: room.memberId, role: role === 'host' ? 'CONTROLLER' : 'LISTENER', connected: false })
     this.installPlayerHooks()
