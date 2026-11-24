@@ -132,18 +132,15 @@ export class RoomSession {
   // ------------------------------------------------ 控制端：本地 → 房间
 
   notifyPlay(): void {
-    if (!this.isSendingAllowed()) return
-    this.client.play()
+    this.isSendingAllowed() && this.client.play()
   }
 
   notifyPause(): void {
-    if (!this.isSendingAllowed()) return
-    this.client.pause()
+    this.isSendingAllowed() && this.client.pause()
   }
 
   notifySeek(positionMs?: number): void {
-    if (!this.isSendingAllowed()) return
-    this.client.seek(positionMs ?? this.player.positionMs())
+    this.isSendingAllowed() && this.client.seek(positionMs ?? this.player.positionMs())
   }
 
   notifyTrackChanged(track?: TrackRef, index?: number): void {
@@ -155,13 +152,11 @@ export class RoomSession {
   }
 
   notifyMode(mode: PlaybackMode): void {
-    if (!this.isSendingAllowed()) return
-    this.client.setMode(mode)
+    this.isSendingAllowed() && this.client.setMode(mode)
   }
 
   notifyFinished(): void {
-    if (!this.isSendingAllowed()) return
-    this.client.notifyTrackFinished()
+    this.isSendingAllowed() && this.client.notifyTrackFinished()
   }
 
   /** 成员端：走 REQUEST_* */
