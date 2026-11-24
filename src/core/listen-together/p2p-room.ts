@@ -27,6 +27,8 @@ export interface P2PRoomOptions {
   onRejected?: (requestType: string, reason: string) => void
   onError?: (message: string) => void
   /** UDP 直连（C++ STUN 打洞）；默认开，失败自动只走 MQTT */
+  /** 备用 MQTT broker（并行发送，用来压尾延迟） */
+  altBrokerUrl?: string
   enableDirect?: boolean
   /** 直连状态变化（UI/日志用） */
   onDirectChange?: (state: { up: boolean, local?: string, remote?: string }) => void
@@ -42,6 +44,8 @@ export class P2PRoom {
   readonly memberId: string
   private readonly options: P2PRoomOptions
   private readonly mqtt: MqttClient
+  /** 备用 broker（并行发送，谁先到用谁的） */
+  private mqttAlt: MqttClient | null = null
   private state: RoomState
   private broadcastTimer: ReturnType<typeof setInterval> | null = null
   private clockTimer: ReturnType<typeof setInterval> | null = null
@@ -116,6 +120,18 @@ export class P2PRoom {
 
   start(): void {
     this.mqtt.connect()
+    // 备用通道：第二个 broker，并行发送（同一 topic），谁先到谁生效
+    if (this.enableDirect !== false && typeof this.options.onDirectChange === 'function') { /* 保持兼容 */ }
+    const altUrl = (this.options as { altBrokerUrl?: string }).altBrokerUrl
+    if (altUrl) {
+      this.mqttAlt = new MqttClient({
+        url: altUrl,
+        clientId: `lx-alt-${this.roomId}-${this.memberId}`.slice(0, 60),
+        onConnect: () => { this.mqttAlt?.subscribe(topicOf(this.roomId)) },
+        onMessage: (topic, payload) => this.handleMessage(topic, payload),
+      })
+      this.mqttAlt.connect()
+    }
     void this.bringUpDirect()
   }
 
@@ -168,6 +184,8 @@ export class P2PRoom {
     if (this.watchdogTimer) clearInterval(this.watchdogTimer)
     this.watchdogTimer = null
     this.mqtt.close()
+    this.mqttAlt?.close()
+    this.mqttAlt = null
   }
 
   get currentState(): RoomState {
@@ -187,8 +205,10 @@ export class P2PRoom {
 
   /** 双通道发送：直连优先（几毫秒），MQTT 兜底（保证送达） */
   private publishBoth(payload: string): void {
+    // 三条路一起发：UDP 直连（最快）、主 broker、备 broker，先到者生效
     if (this.directUp) void directSend(payload)
     this.mqtt.publish(topicOf(this.roomId), payload)
+    this.mqttAlt?.publish(topicOf(this.roomId), payload)
   }
 
   /** 紧凑状态：热路径上每次只发必要字段，少几十上百字节，中转更快 */
