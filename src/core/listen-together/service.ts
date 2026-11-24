@@ -13,7 +13,7 @@ import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
 import { P2PRoom, makeRoomId } from './p2p-room'
 import { monotonicMs, primeClock } from '@/utils/nativeModules/clockrt'
-import { pushAnchor, syncPlayheadMs, syncClear } from '@/utils/nativeModules/syncEngine'
+import { cancelNative, pushAnchor, scheduleNative, startSyncPump, syncClear, syncPlayheadMs } from '@/utils/nativeModules/syncEngine'
 import { playheadAt } from './playhead'
 import { getResolvedUrl, getLastResolvedUrl, rememberResolvedUrl } from './resolved-url'
 import { getMusicUrl } from '@/core/music'
@@ -313,6 +313,9 @@ class ListenTogetherService {
 
   async leave(): Promise<void> {
     await this.clearPreloads()
+    if (this.stopSyncPump) { this.stopSyncPump(); this.stopSyncPump = null }
+    this.scheduled.clear()
+    await syncClear()
     if (this.p2p) {
       this.p2p.close()
       this.p2p = null
@@ -514,25 +517,51 @@ class ListenTogetherService {
   }
 
   private startTimer: ReturnType<typeof setTimeout> | null = null
+  /** 原生定时命令表：id → 要执行的回调 */
+  private scheduled = new Map<number, () => void>()
+  private nextCommandId = 1
+  private stopSyncPump: (() => void) | null = null
 
   /**
    * 成员端「按锚点起播」：房主的 SET_TRACK 带 400ms 提前量，
    * 收到后不立刻播，而是等到锚点生效的那一刻再 seek+play ——
    * 这样两端的第一个音符是同一秒出声，而不是“你先响 1 秒我才加载完”。
    */
+  /** 原生定时调度：优先走 C++ 线程，失败才用 JS 定时器 */
+  private async scheduleAt(delayMs: number, run: () => void): Promise<void> {
+    const id = this.nextCommandId++
+    this.scheduled.set(id, run)
+    if (!this.stopSyncPump) {
+      this.stopSyncPump = startSyncPump((commandId) => {
+        const task = this.scheduled.get(commandId)
+        if (!task) return
+        this.scheduled.delete(commandId)
+        try { task() } catch (error) { /* 命令执行失败不影响房间 */ }
+      })
+    }
+    const ok = await scheduleNative(id, delayMs)
+    if (!ok) {
+      setTimeout(() => {
+        const task = this.scheduled.get(id)
+        if (!task) return
+        this.scheduled.delete(id)
+        try { task() } catch (error) { /* 忽略 */ }
+      }, Math.max(0, Math.round(delayMs)))
+    }
+  }
+
   private scheduleMemberStart(track: TrackRef, anchorServerMs: number, positionMs: number, serverNow: number): void {
     if (this.startTimer) { clearTimeout(this.startTimer); this.startTimer = null }
     const monoAtReceive = monotonicMs()
     const leadMs = anchorServerMs - serverNow // 通常 400ms
     const fireIn = Math.max(0, Math.min(2000, leadMs))
-    this.startTimer = setTimeout(() => {
-      this.startTimer = null
+    this.startTimer = null
+    void this.scheduleAt(fireIn, () => {
       const monoNow = monotonicMs()
       const late = Math.max(0, monoNow - monoAtReceive)
-      // 精确位置：锚点时刻应有的位置 + 我们已经晚到的部分（单调时钟，无墙钟误差）
       const target = Math.max(0, positionMs + Math.max(0, late - leadMs))
       void this.startTrackAt(track, target)
-    }, fireIn)
+    })
   }
 
   /** 在指定位置开始播放这首歌（成员端） */
