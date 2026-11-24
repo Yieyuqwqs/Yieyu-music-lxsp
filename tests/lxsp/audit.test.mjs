@@ -35,8 +35,9 @@ export default (t) => {
   })
 
   t.suite('审计：切房/离开是原子重置', () => {
-    t.ok(svc.includes('resetSession'), '存在 resetSession')
-    t.ok(svc.includes('void this.resetSession()'), 'startP2P 调用它')
+    t.ok(svc.includes('teardownSync'), '存在同步 teardown')
+    t.ok(/teardownSync\(\)\n\s+const room = new P2PRoom/.test(svc) || svc.indexOf('teardownSync()') < svc.indexOf('installPlayerHooks()'), 'teardown 在建会话/装钩子之前')
+    t.ok(svc.includes('const generation = this.generation'), '钩子带代际守卫')
   })
 
   t.suite('审计：STUN 国内优先且失败轮换', () => {
@@ -63,6 +64,23 @@ export default (t) => {
     t.ok(text.includes('只修根因'), '第六条')
     t.ok(text.includes('不许留未完成的临时方案'), '第七条')
     t.ok(text.includes('诚实高于好看'), '第八条')
+  })
+
+  t.suite('审计：播放器钩子不会被异步清理抹掉（会话代际）', () => {
+    const svc = read('src/core/listen-together/service.ts')
+    t.ok(svc.includes('private generation = 0'), '存在会话代际')
+    t.ok(/teardownSync\(\)\.\n/.test(svc) || svc.indexOf('this.teardownSync()') > 0, 'startP2P 先同步 teardown')
+    t.ok(svc.indexOf('this.teardownSync()') < svc.indexOf('this.installPlayerHooks()'), 'teardown 在装钩子之前')
+    t.ok(svc.includes('const alive = () => generation === this.generation'), '钩子有过期守卫')
+  })
+
+  t.suite('审计：网络状态只有一个真相', () => {
+    const svc = read('src/core/listen-together/service.ts')
+    const room = read('src/core/listen-together/p2p-room.ts')
+    t.ok(!/^\s*direct: \{/m.test(svc), 'RoomStatus 不再有 direct 字段')
+    t.ok(/^\s*transport: /m.test(svc), 'RoomStatus 有 transport')
+    t.ok(room.includes('private setTransport('), 'P2PRoom 有唯一写入口')
+    t.ok((room.match(/this\.transport = /g) || []).length <= 2, 'transport 只在一处赋值')
   })
 
   t.suite('审计：契约测试在位', () => {
