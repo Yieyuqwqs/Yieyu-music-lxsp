@@ -1,0 +1,12 @@
+name = "listening-room"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+# 一个房间一个 Durable Object；类名必须与 src/room-do.ts 导出一致
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "ListeningRoomDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ListeningRoomDO"]
