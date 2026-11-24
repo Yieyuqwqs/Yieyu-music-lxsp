@@ -31,6 +31,8 @@ export interface RoomStatus {
   positionMs: number
   state: RoomState | null
   lastError: string | null
+  /** 最近一条房间事件（切歌/对齐），方便排查「为什么没反应」 */
+  lastEvent: string | null
 }
 
 const createPlayerAdapter = (): PlayerAdapter => ({
@@ -58,7 +60,7 @@ class ListenTogetherService {
   private session: RoomSession | null = null
   private status: RoomStatus = {
     connected: false, roomId: null, role: null, memberId: null,
-    members: [], isPlaying: false, positionMs: 0, state: null, lastError: null,
+    members: [], isPlaying: false, positionMs: 0, state: null, lastError: null, lastEvent: null,
   }
   private listeners = new Set<(status: RoomStatus) => void>()
 
@@ -318,24 +320,40 @@ class ListenTogetherService {
    */
   async switchToTrack(track: TrackRef): Promise<boolean> {
     try {
+      this.update({ lastEvent: `收到切歌：${track.name} - ${track.singer}（${track.stableKey}）` })
+      // 直达：房间给的 source:id 就是平台歌曲 ID，直接还原成在线曲目交给播放器
+      if (track.source && track.id && track.source !== 'local') {
+        const info = toNewMusicInfo({
+          source: track.source,
+          name: track.name,
+          singer: track.singer,
+          songmid: track.id,
+          interval: '',
+          albumName: '',
+          img: '',
+        })
+        setMusicUrl(info as never)
+        this.update({ lastError: null, lastEvent: `已切到：${track.name} - ${track.singer}` })
+        return true
+      }
       const listId = playerState.playMusicInfo.listId
       const list = listId ? (getList(listId) as Array<{ id?: string, source?: string, name?: string, singer?: string, meta?: { songId?: string } }>) : []
       const hit = list.find(item => stableKeyOfMusicInfo(item) === track.stableKey) ??
         pickBestTrack(list, track)
       if (hit && listId) {
         await playListById(listId, String(hit.id))
-        this.update({ lastError: null })
+        this.update({ lastError: null, lastEvent: `已在当前列表切到：${track.name}` })
         return true
       }
 
       const items = await this.searchLocal(track)
       const best = pickBestTrack(items, track)
       if (!best) {
-        this.update({ lastError: `本机找不到「${track.name}」` })
+        this.update({ lastError: `本机找不到「${track.name}」`, lastEvent: null })
         return false
       }
       setMusicUrl(toNewMusicInfo(best) as never)
-      this.update({ lastError: null })
+      this.update({ lastError: null, lastEvent: `搜索命中并切歌：${track.name}` })
       return true
     } catch (error) {
       this.update({ lastError: `自动切歌失败：${(error as Error).message}` })
