@@ -2,12 +2,15 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
 
 #include <chrono>
 #include <cstring>
+#include <pthread.h>
 
 #include "p2p_stun.h"
 #include "p2p_wire.h"
@@ -47,8 +50,19 @@ bool UdpPeer::start(const char* stun_host, uint16_t stun_port, int timeout_ms, s
   tv.tv_sec = 0;
   tv.tv_usec = 200 * 1000;
   ::setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  // 收发缓冲拉大：宁可多占 1MB，也不要因为缓冲区小丢包
+  int buf = 1024 * 1024;
+  ::setsockopt(fd_, SOL_SOCKET, SO_RCVBUF, &buf, sizeof(buf));
+  ::setsockopt(fd_, SOL_SOCKET, SO_SNDBUF, &buf, sizeof(buf));
+  // TOS = 0xB8（DSCP EF 加速转发）：蜂窝网未必生效，但生效就是白赚
+  int tos = 0xB8;
+  ::setsockopt(fd_, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
   running_.store(true);
-  thread_ = std::thread([this]() { this->recv_loop(); });
+  thread_ = std::thread([this]() {
+    // 接收线程优先：抖动越小，对齐越稳
+    ::setpriority(PRIO_PROCESS, static_cast<id_t>(::gettid()), -10);
+    this->recv_loop();
+  });
   return true;
 }
 
@@ -115,6 +129,9 @@ bool UdpPeer::send_payload(const uint8_t* data, size_t size) {
   if (!has_remote_) return false;
   const ssize_t wrote = ::sendto(fd_, buffer, length, 0,
                                  reinterpret_cast<struct sockaddr*>(&remote_), sizeof(struct sockaddr_in));
+  // 立即再发一份：不占 CPU（一次 syscall），但把尾包丢失率直接砍半
+  if (wrote > 0) ::sendto(fd_, buffer, length, 0,
+                          reinterpret_cast<struct sockaddr*>(&remote_), sizeof(struct sockaddr_in));
   if (wrote > 0) {
     stats_.sent += 1;
     return true;
