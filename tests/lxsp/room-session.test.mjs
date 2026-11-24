@@ -147,3 +147,21 @@ export default (t) => {
     t.ok(true, '没有重复订阅炸掉')
   })
 }
+
+// 成员侧强制对齐：本地被手动改了也要被拽回房间状态
+export const enforceSuite = (t) => {
+  t.suite('成员侧强制对齐：1.5 秒内把跑偏的本地播放拉回房间', async() => {
+    const player = makePlayer({ playing: false, position: 99_000 })
+    const client = makeClient({ controller: false, playhead: 30_000 })
+    const session = new RoomSession({ client, player, enforceIntervalMs: 60, driftThresholdMs: 400 })
+    session.start()
+    session.applyState(ROOM)
+    player.setPosition(1_000)   // 用户手动拖跑
+    player.pause()              // 用户手动暂停
+    await new Promise(resolve => setTimeout(resolve, 200))
+    session.stop()
+    const seeks = player.calls.filter(c => c[0] === 'seek').pop()
+    t.eq(seeks?.[1], 30_000, '被拉回房间播放头')
+    t.eq(player.isPlaying(), true, '被拉回播放状态')
+  })
+}
