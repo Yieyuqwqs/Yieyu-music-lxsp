@@ -45,7 +45,6 @@ export interface RoomSessionOptions {
   /** 播放头偏差超过这个值才强制对齐，默认 400ms */
   driftThresholdMs?: number
   /** 成员侧强制对齐间隔（毫秒），默认 1.5 秒；房主不用这个 */
-  enforceIntervalMs?: number
   onEvent?: (event: RoomSessionEvent) => void
 }
 
@@ -65,14 +64,11 @@ export class RoomSession {
   private started = false
   /** 成员侧：最后一次房间状态，用来做强制对齐 */
   private lastState: RoomState | null = null
-  private enforceTimer: ReturnType<typeof setInterval> | null = null
-  private readonly enforceIntervalMs: number
 
   constructor(options: RoomSessionOptions) {
     this.client = options.client
     this.player = options.player
     this.driftThresholdMs = options.driftThresholdMs ?? 1000
-    this.enforceIntervalMs = options.enforceIntervalMs ?? 600
     this.onEvent = options.onEvent
   }
 
@@ -80,14 +76,6 @@ export class RoomSession {
   start(): void {
     if (this.started) return
     this.started = true
-    // 成员：定时把本地播放器往房间状态上拽。
-    // 不做这个的话，成员自己点一下播放器就能跑偏（真实产品里成员端是被从属的）
-    if (!this.client.isController) {
-      this.enforceTimer = setInterval(() => {
-        if (!this.lastState) return
-        this.applyState(this.lastState)
-      }, this.enforceIntervalMs)
-    }
     this.unsubscribe = this.client.on((event) => {
       if (event.type === 'state') this.applyState(event.state as RoomState)
       else if (event.type === 'error') this.emit({ type: 'error', message: String(event.message ?? '') })
@@ -96,10 +84,6 @@ export class RoomSession {
 
   stop(): void {
     this.started = false
-    if (this.enforceTimer) {
-      clearInterval(this.enforceTimer)
-      this.enforceTimer = null
-    }
     this.lastState = null
     this.unsubscribe?.()
     this.unsubscribe = null
