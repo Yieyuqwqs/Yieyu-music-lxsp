@@ -165,3 +165,20 @@ export const enforceSuite = (t) => {
     t.eq(player.isPlaying(), true, '被拉回播放状态')
   })
 }
+
+// 单调时钟版播放头 + 提前量（不依赖两台设备的时间是否一致）
+export const preciseSuite = (t) => {
+  t.suite('单调时钟播放头：只用本地增量，不跨设备比 epoch', async() => {
+    const { snapshotOf, playheadFromSnapshot, leadRemainingMs } = await import('../../src/core/listen-together/playhead.ts')
+    // 房主在 serverNow=1000000 时下发：anchor = 1000400、position = 30000（提前 400ms 生效）
+    const snap = snapshotOf({ positionMs: 30_000, anchorServerMs: 1_000_400, isPlaying: true, trackStableKey: 'kw:1' }, 1_000_000, 5_000)
+    t.eq(playheadFromSnapshot(snap, 5_000), 30_000, '刚收到时还停在 30s')
+    t.eq(playheadFromSnapshot(snap, 5_200), 30_000, '提前量没到，不动')
+    t.eq(leadRemainingMs(snap, 5_200), 200, '还差 200ms 才到锚点')
+    t.eq(playheadFromSnapshot(snap, 5_400), 30_000, '锚点生效那一刻正好 30s')
+    t.eq(playheadFromSnapshot(snap, 6_400), 31_000, '之后过 1 秒就 +1 秒（本地单调时钟）')
+    // 对方系统时间快了 3 小时也不影响：快照里根本没用对方的 epoch
+    const snap2 = snapshotOf({ positionMs: 0, anchorServerMs: 1_000_400, isPlaying: false, trackStableKey: 'kw:2' }, 1_000_000, 9_000)
+    t.eq(playheadFromSnapshot(snap2, 15_000), 0, '暂停就不走')
+  })
+}
