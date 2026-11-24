@@ -45,6 +45,10 @@ jobs:
             echo "SIGNING_KEY_ALIAS=yieyu"
           } >> "$GITHUB_ENV"
 
+      - name: Setup Node 24 (tests need TS strip-types)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Run self-verify (28 tests + branch audit + real-link sim)
         shell: bash
         run: |
