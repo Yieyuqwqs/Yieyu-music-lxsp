@@ -65,7 +65,6 @@ export class P2PRoom {
   private sentHello = false
   private readonly enableDirect: boolean
   /** 最近一次别人分享的直链，本机解析失败时可直接用 */
-  private lastSharedUrl: { key: string, url: string } | null = null
   private closed = false
 
   constructor(options: P2PRoomOptions) {
@@ -448,20 +447,6 @@ export class P2PRoom {
       return
     }
 
-    // 任何人解析出直链都可以分享，其他人直接复用（P2P 的意义就在这）
-    if (message.type === 'URL_SHARE') {
-      const key = String(message.stableKey ?? '')
-      const url = String(message.url ?? '')
-      if (key && /^https?:\/\//i.test(url)) {
-        const index = this.state.queue.findIndex(item => item.stableKey === key)
-        if (index >= 0) this.state.queue[index] = { ...this.state.queue[index], url }
-        if (this.state.playback.trackStableKey === key) this.state.playback = { ...this.state.playback }
-        this.lastSharedUrl = { key, url }
-        if (this.role === 'host') this.broadcastState()
-      }
-      return
-    }
-
     // 房主：共享队列操作（任何成员都能加歌/删歌）
     if (this.role === 'host' && message.t === 'QA') {
       this.control('QUEUE_ADD', { tracks: (message.q as TrackRef[]) ?? [] })
@@ -573,7 +558,6 @@ export class P2PRoom {
 
   /** 房间里别人分享过的直链（本机解析不出来时用） */
   get sharedUrl(): { key: string, url: string } | null {
-    return this.lastSharedUrl
   }
 
   get clock(): ClockSync {
