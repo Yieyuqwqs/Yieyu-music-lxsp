@@ -39,3 +39,36 @@ export const localPlayhead = (playback: PlaybackState, deviceNow: number, sync: 
 export const driftMs = (playback: PlaybackState, deviceNow: number, sync: ClockSync): number => (
   localPlayhead(playback, deviceNow, sync) - playheadAt(playback, serverNowOf(deviceNow, sync))
 )
+
+/** 控制指令生效的提前量（与云版一致） */
+export const LEAD_MS = 400
+
+/** 播放/恢复：锚点前置 400ms */
+export const anchorForPlay = (playback: PlaybackState, serverNow: number): PlaybackState => ({
+  ...playback,
+  anchorServerMs: serverNow + LEAD_MS,
+  isPlaying: true,
+})
+
+/** 暂停：位置定格在现在 */
+export const anchorForPause = (playback: PlaybackState, serverNow: number): PlaybackState => ({
+  ...playback,
+  positionMs: playheadAt(playback, serverNow),
+  anchorServerMs: serverNow,
+  isPlaying: false,
+})
+
+/** 拖动 */
+export const anchorForSeek = (playback: PlaybackState, serverNow: number, positionMs: number): PlaybackState => ({
+  ...playback,
+  positionMs: Math.max(0, Math.floor(positionMs)),
+  anchorServerMs: playback.isPlaying ? serverNow + LEAD_MS : serverNow,
+})
+
+/** 换曲：位置归零并开播 */
+export const anchorForSetTrack = (playback: PlaybackState, serverNow: number, stableKey: string): PlaybackState => ({
+  positionMs: 0,
+  anchorServerMs: serverNow + LEAD_MS,
+  isPlaying: true,
+  trackStableKey: stableKey,
+})
