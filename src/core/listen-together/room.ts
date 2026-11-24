@@ -34,6 +34,8 @@ export interface PlayerAdapter {
   isPlaying: () => boolean
   /** 毫秒 */
   positionMs: () => number
+  /** 可选：微调播放速率（1.0 = 正常），用于小偏差追赶 */
+  setRate?: (rate: number) => void
   currentTrack: () => TrackRef | null
 }
 
@@ -110,16 +112,25 @@ export class RoomSession {
       this.emit(event)
     }
 
-    // 播放头对齐：只在不播放/或偏差过大时 seek，避免每次广播都抖一下
+    // 漂移修正（行业通行做法）：
+    //   < 50ms 不动 ｜ 50-300ms 改播放速率慢慢追 ｜ > 300ms 直接 seek
     const target = this.client.playheadMs()
     const current = this.player.positionMs()
-    if (target > 0 && Math.abs(target - current) > this.driftThresholdMs) {
-      this.applyingRemote = true
-      this.player.seek(target)
-      this.applyingRemote = false
-      const event: RoomSessionEvent = { type: 'applied', action: 'seek', positionMs: target }
-      events.push(event)
-      this.emit(event)
+    if (target > 0) {
+      const drift = target - current
+      const abs = Math.abs(drift)
+      if (abs > this.driftThresholdMs) {
+        this.applyingRemote = true
+        this.player.seek(target)
+        this.applyingRemote = false
+        this.emitAndPush(events, { type: 'applied', action: 'seek', positionMs: target })
+      } else if (abs > 50 && this.player.setRate && state.playback.isPlaying) {
+        this.applyingRemote = true
+        // 落后就略快、超前就略慢，追上后恢复 1.0
+        this.player.setRate(drift > 0 ? 1.03 : 0.97)
+        this.applyingRemote = false
+        setTimeout(() => { this.player.setRate?.(1) }, 1500)
+      }
     }
     return events
   }
@@ -168,6 +179,11 @@ export class RoomSession {
   private isSendingAllowed(): boolean {
     if (this.applyingRemote) return false
     return this.client.isController
+  }
+
+  private emitAndPush(list: RoomSessionEvent[], event: RoomSessionEvent): void {
+    list.push(event)
+    this.emit(event)
   }
 
   private emit(event: RoomSessionEvent): void {
