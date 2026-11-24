@@ -553,10 +553,15 @@ class ListenTogetherService {
 
   /** 后台把队列里缺直链的歌解析出来（谁能解析谁解析，解析成功就分享给房间） */
   private resolving = new Set<string>()
+  /** 预加载窗口：当前曲目后面几首要提前解析好直链 */
+  private readonly PRELOAD_AHEAD = 2
   private ensureQueueUrls(): void {
     const room = this.p2p
     if (!room) return
-    for (const track of this.status.queue) {
+    // 只预热「当前 + 后两首」，别把 200 首全解析了
+    const from = Math.max(0, this.status.currentIndex)
+    const window_ = this.status.queue.slice(from, from + this.PRELOAD_AHEAD + 1)
+    for (const track of window_) {
       if (track.url) continue
       if (this.resolving.has(track.stableKey)) continue
       if (!track.source || !track.id || track.source === 'local') continue
