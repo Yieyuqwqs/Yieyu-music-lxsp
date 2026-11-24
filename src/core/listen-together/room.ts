@@ -71,8 +71,8 @@ export class RoomSession {
   constructor(options: RoomSessionOptions) {
     this.client = options.client
     this.player = options.player
-    this.driftThresholdMs = options.driftThresholdMs ?? 400
-    this.enforceIntervalMs = options.enforceIntervalMs ?? 1500
+    this.driftThresholdMs = options.driftThresholdMs ?? 1000
+    this.enforceIntervalMs = options.enforceIntervalMs ?? 600
     this.onEvent = options.onEvent
   }
 
@@ -145,12 +145,12 @@ export class RoomSession {
         this.player.seek(target)
         this.applyingRemote = false
         this.emitAndPush(events, { type: 'applied', action: 'seek', positionMs: target })
-      } else if (abs > 50 && this.player.setRate && state.playback.isPlaying) {
+      } else if (abs > 100 && this.player.setRate && state.playback.isPlaying) {
         this.applyingRemote = true
         // 落后就略快、超前就略慢，追上后恢复 1.0
-        this.player.setRate(drift > 0 ? 1.03 : 0.97)
+        this.player.setRate(drift > 0 ? 1.06 : 0.94)
         this.applyingRemote = false
-        setTimeout(() => { this.player.setRate?.(1) }, 1500)
+        setTimeout(() => { this.player.setRate?.(1) }, 1200)
       }
     }
     return events
