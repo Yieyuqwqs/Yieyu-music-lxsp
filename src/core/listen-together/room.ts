@@ -8,8 +8,23 @@
  *
  * 播放器通过 PlayerAdapter 注入，方便单测（也避免这个文件直接依赖 RN）。
  */
-import type { ListenTogetherClient } from './client'
 import type { PlaybackMode, RoomState, TrackRef } from './protocol'
+
+/** RoomSession 需要的最小能力（HTTP 客户端与 P2P 房间都满足） */
+export interface RoomSessionClient {
+  on: (handler: (event: { type: string, [key: string]: unknown }) => void) => () => void
+  isController: boolean
+  playheadMs: () => number
+  play: () => void
+  pause: () => void
+  seek: (positionMs: number) => void
+  setTrack: (track: TrackRef, index?: number) => void
+  setMode: (mode: PlaybackMode) => void
+  notifyTrackFinished: () => void
+  requestPlay: () => void
+  requestPause: () => void
+  requestSeek: (positionMs: number) => void
+}
 
 export interface PlayerAdapter {
   play: () => void
@@ -23,7 +38,7 @@ export interface PlayerAdapter {
 }
 
 export interface RoomSessionOptions {
-  client: ListenTogetherClient
+  client: RoomSessionClient
   player: PlayerAdapter
   /** 播放头偏差超过这个值才强制对齐，默认 400ms */
   driftThresholdMs?: number
@@ -36,7 +51,7 @@ export type RoomSessionEvent =
   | { type: 'error', message: string }
 
 export class RoomSession {
-  private readonly client: ListenTogetherClient
+  private readonly client: RoomSessionClient
   private readonly player: PlayerAdapter
   private readonly driftThresholdMs: number
   private readonly onEvent?: (event: RoomSessionEvent) => void
@@ -57,8 +72,8 @@ export class RoomSession {
     if (this.started) return
     this.started = true
     this.unsubscribe = this.client.on((event) => {
-      if (event.type === 'state') this.applyState(event.state)
-      else if (event.type === 'error') this.emit({ type: 'error', message: event.message })
+      if (event.type === 'state') this.applyState(event.state as RoomState)
+      else if (event.type === 'error') this.emit({ type: 'error', message: String(event.message ?? '') })
     })
   }
 
