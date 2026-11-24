@@ -36,6 +36,7 @@ const files = ['./pure.test.mjs', './resolver.test.mjs', './wire.test.mjs', './e
 for (const file of files) {
   const mod = await import(file)
   mod.default(t)
+  if (typeof mod.enforceSuite === 'function') mod.enforceSuite(t)
 }
 
 let passed = 0
