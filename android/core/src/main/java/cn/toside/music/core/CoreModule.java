@@ -252,6 +252,43 @@ public final class CoreModule extends ReactContextBaseJavaModule implements Core
     p2pPumpThread = null;
     promise.resolve(true);
   }
+  // 同步调度泵：原生到点后 emit 给 JS，JS 只负责“执行命令”
+  private volatile boolean syncPumpRunning = false;
+  private Thread syncPumpThread = null;
+
+  @ReactMethod
+  public void syncStartPump(Promise promise) {
+    if (syncPumpRunning) { promise.resolve(true); return; }
+    syncPumpRunning = true;
+    syncPumpThread = new Thread(() -> {
+      while (syncPumpRunning) {
+        try {
+          int[] due = nativeSyncTakeDue();
+          if (due != null && due.length > 0 && getReactApplicationContext().hasActiveReactInstance()) {
+            for (int id : due) {
+              getReactApplicationContext()
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
+                .emit("lxp2p:sync", id);
+            }
+          } else {
+            Thread.sleep(1);
+          }
+        } catch (Throwable ignored) {
+          try { Thread.sleep(5); } catch (InterruptedException e) { break; }
+        }
+      }
+    }, "lxp2p-sync");
+    syncPumpThread.setPriority(Thread.MAX_PRIORITY);
+    syncPumpThread.start();
+    promise.resolve(true);
+  }
+
+  @ReactMethod
+  public void syncStopPump(Promise promise) {
+    syncPumpRunning = false;
+    syncPumpThread = null;
+    promise.resolve(true);
+  }
   // ---------------- 一起听：原生同步引擎（锚点 + 播放头 + 定时调度） ----------------
 
   @ReactMethod
