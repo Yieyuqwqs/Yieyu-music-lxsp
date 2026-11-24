@@ -557,6 +557,8 @@ class ListenTogetherService {
 
   /** 后台把队列里缺直链的歌解析出来（谁能解析谁解析，解析成功就分享给房间） */
   private resolving = new Set<string>()
+  /** 已经预热过的直链（避免重复占用流量） */
+  private warmed = new Set<string>()
   /** 预加载窗口：当前曲目后面几首要提前解析好直链 */
   private readonly PRELOAD_AHEAD = 2
   private ensureQueueUrls(): void {
@@ -580,6 +582,7 @@ class ListenTogetherService {
           if (url && /^https?:\/\//i.test(url)) {
             rememberResolvedUrl(info as never, url)
             room.shareUrl(track.stableKey, url)
+            void this.warmUpUrl(url)
             this.update({ lastEvent: `队列已备好直链：${track.name}` })
           }
         } catch (error) {
@@ -589,6 +592,19 @@ class ListenTogetherService {
         }
       })()
     }
+  }
+
+  /**
+   * 预热直链：只拉前 32KB。
+   * 目的不是缓存整首歌，而是把 DNS 解析、TLS 握手、CDN 边缘回源这几百毫秒提前做掉 ——
+   * 真正切歌时播放器只要接着往下读，起播就快。
+   */
+  private async warmUpUrl(url: string): Promise<void> {
+    if (!url || this.warmed.has(url)) return
+    this.warmed.add(url)
+    try {
+      await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-32767' } })
+    } catch (error) { /* 预热失败不影响播放 */ }
   }
 
   /** 把某首歌加进共享队列 */
