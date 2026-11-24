@@ -7,7 +7,9 @@
 import playerState from '@/store/player/state'
 import settingState from '@/store/setting/state'
 import { play, pause } from '@/core/player/player'
-import { setCurrentTime } from '@/plugins/player/utils'
+import { setCurrentTime, setResource, setPlay } from '@/plugins/player/utils'
+import { setPlayMusicInfo } from '@/core/player/playInfo'
+import TrackPlayer from 'react-native-track-player'
 import { ListenTogetherClient } from './client'
 import { P2PRoom, makeRoomId } from './p2p-room'
 import { setPlayerHooks } from '@/core/player/hooks'
@@ -295,10 +297,9 @@ class ListenTogetherService {
       onPause: () => this.pushPause(),
       onSeek: (positionMs) => this.pushSeek(positionMs),
       onTrackChange: (musicInfo) => {
-        // 控制端换曲：直接把这一首同步上去（用回调里的 musicInfo，而不是再去读可能还没更新的 playerState）
-        if (!this.client?.isController) return
-        const track = musicInfo ? this.toRef(musicInfo as never) : null
-        if (track) this.session?.notifyTrackChanged(track)
+        // 控制端换曲：等播放器把直链装好再同步（ensure 直链能带过去）
+        if (!this.client?.isController && !this.p2p) return
+        setTimeout(() => { void this.pushTrackWithUrl() }, 600)
       },
     })
   }
@@ -321,7 +322,26 @@ class ListenTogetherService {
   async switchToTrack(track: TrackRef): Promise<boolean> {
     try {
       this.update({ lastEvent: `收到切歌：${track.name} - ${track.singer}（${track.stableKey}）` })
-      // 直达：房间给的 source:id 就是平台歌曲 ID，直接还原成在线曲目交给播放器
+      // 最优：房主已经把直链解析好了，直接放它（不依赖搜索、不依赖两端 id 一致）
+      if (track.url && /^https?:\/\//i.test(track.url)) {
+        const info = toNewMusicInfo({
+          source: track.source,
+          name: track.name,
+          singer: track.singer,
+          songmid: track.id,
+          interval: '',
+          albumName: '',
+          img: '',
+        })
+        setPlayMusicInfo(null, info, true)
+        const seekSeconds = Math.max(0, (this.p2p?.playheadMs() ?? 0) / 1000)
+        setResource(info as never, track.url, seekSeconds)
+        void setPlay()
+        this.update({ lastError: null, lastEvent: `用房间直链播放：${track.name}` })
+        return true
+      }
+
+      // 次优：房间给的 source:id 就是平台歌曲 ID，还原成在线曲目交给播放器
       if (track.source && track.id && track.source !== 'local') {
         const info = toNewMusicInfo({
           source: track.source,
@@ -375,12 +395,31 @@ class ListenTogetherService {
     return []
   }
 
+  /** 控制端：把当前歌曲（带直链）同步到房间 —— 这条是「换歌能不能过去」的关键 */
+  async pushTrackWithUrl(): Promise<void> {
+    const base = createPlayerAdapter().currentTrack()
+    if (!base) {
+      this.update({ lastError: '当前没有在播的歌，无法同步' })
+      return
+    }
+    let url: string | undefined
+    try {
+      const active = await TrackPlayer.getActiveTrack() as { url?: string } | undefined
+      url = active?.url
+    } catch (error) { /* 取不到就不带直链，退回按 id 还原 */ }
+    const track = url ? { ...base, url } : base
+    if (this.p2p) this.p2p.control('SET_TRACK', { track })
+    else this.session?.notifyTrackChanged(track)
+    this.update({ lastEvent: url ? `已同步：${track.name}（含直链）` : `已同步：${track.name}（无直链）` })
+  }
+
   /** 控制端：把本地操作同步到房间 */
   pushPlay(): void {
     if (this.p2p) {
+      const currentKey = this.p2p.currentState.playback.trackStableKey
       const track = createPlayerAdapter().currentTrack()
-      if (track && track.stableKey !== this.p2p.currentState.playback.trackStableKey) {
-        this.p2p.control('SET_TRACK', { track })
+      if (track && track.stableKey !== currentKey) {
+        void this.pushTrackWithUrl()
       }
       this.p2p.control('PLAY')
       return
@@ -403,12 +442,7 @@ class ListenTogetherService {
     this.session?.notifySeek(positionMs)
   }
   pushTrack(): void {
-    if (this.p2p) {
-      const track = createPlayerAdapter().currentTrack()
-      if (track) this.p2p.control('SET_TRACK', { track })
-      return
-    }
-    this.session?.notifyTrackChanged()
+    void this.pushTrackWithUrl()
   }
   /** 成员端：申请 */
   requestPlay(): void {
