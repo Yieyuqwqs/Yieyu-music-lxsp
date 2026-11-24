@@ -89,8 +89,8 @@ export default (t) => {
 
   t.suite('宪法：docs/constitution 十条拆分为独立文件且总表完整', () => {
     const table = read('docs/constitution/README.md')
-    t.eq((table.match(/^\| \d+ \|/gm) || []).length, 13, '总表必须有 13 行（含第十三条）')
-    const names = ['01-no-patching.md', '02-four-parts.md', '03-single-source-of-truth.md', '04-verify-references.md', '05-measured-performance.md', '06-fix-root-cause-only.md', '07-no-temporary-hacks.md', '08-honesty-first.md', '09-change-list.md', '10-no-dead-zone.md', '11-no-greenhouse-testing.md', '12-no-blame-shifting.md', '13-self-audit.md']
+    t.eq((table.match(/^\| \d+ \|/gm) || []).length, 14, '总表必须有 14 行（含第十四条）')
+    const names = ['01-no-patching.md', '02-four-parts.md', '03-single-source-of-truth.md', '04-verify-references.md', '05-measured-performance.md', '06-fix-root-cause-only.md', '07-no-temporary-hacks.md', '08-honesty-first.md', '09-change-list.md', '10-no-dead-zone.md', '11-no-greenhouse-testing.md', '12-no-blame-shifting.md', '13-self-audit.md', '14-no-self-modifying-rules.md']
     const missing = names.filter((name) => !existsSync(fileURLToPath(new URL(`../../docs/constitution/${name}`, import.meta.url))))
     t.eq(missing, [], '缺失文件')
     for (const name of names) {
