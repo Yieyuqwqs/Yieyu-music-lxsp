@@ -14,6 +14,7 @@ struct PeerStats {
   uint32_t sent = 0;
   uint32_t received = 0;
   uint32_t dropped = 0;
+  uint32_t keepalives = 0;
   int64_t last_rtt_us = 0;
   bool connected = false;
   std::string remote = "-";
@@ -46,6 +47,8 @@ class UdpPeer {
 
   int fd_ = -1;
   std::thread thread_;
+  std::thread keepalive_thread_;
+  void keepalive_loop();
   std::atomic<bool> running_{false};
   std::atomic<uint32_t> seq_{0};
   mutable std::mutex mutex_;
