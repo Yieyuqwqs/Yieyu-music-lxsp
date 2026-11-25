@@ -67,15 +67,35 @@ export default (t) => {
     t.eq(player.calls.length, first, '同版本不再触发任何播放器调用')
   })
 
-  t.suite('RoomSession：成员端不得发出控制事件（权限守卫）', () => {
+  t.suite('RoomSession：成员端也能按播放/暂停/进度（一起听是共享歌单）', () => {
     const player = makePlayer()
     const client = makeClient(false)
     const session = new RoomSession({ client, player })
     session.notifyPlay()
     session.notifyPause()
     session.notifySeek(1000)
+    t.eq(client.sent, ['PLAY', 'PAUSE', ['SEEK', 1000]], '成员的三条播放控制必须真的发出去')
+  })
+
+  t.suite('RoomSession：成员端仍不得切歌 / 改模式（队列语义只有控制端能动）', () => {
+    const player = makePlayer()
+    const client = makeClient(false)
+    const session = new RoomSession({ client, player })
     session.notifyTrackChanged()
-    t.eq(client.sent, [], '成员端一条控制事件都不许发')
+    session.notifyMode('random')
+    t.eq(client.sent, [], '切歌与改模式不许由成员直接发')
+  })
+
+  t.suite('RoomSession：应用远端状态期间不许把回环动作再发出去', () => {
+    const player = makePlayer()
+    const client = makeClient(false)
+    const session = new RoomSession({ client, player })
+    // 远端状态要求「播放」→ 播放器真的被 play() → 钩子回调 notifyPlay
+    player.play = () => { session.notifyPlay() }
+    session.applyState({ ...ROOM, version: 7 })
+    t.eq(client.sent, [], '远端驱动的播放不能回环成一条新命令（否则两端互相踢皮球）')
+    session.notifyPlay()
+    t.eq(client.sent, ['PLAY'], '应用结束后，用户自己按的播放仍然要发出去')
   })
 
   t.suite('RoomSession：控制端发送控制事件', () => {
