@@ -703,15 +703,6 @@ class ListenTogetherService {
     this.update({ lastEvent: `已加入队列：${track.name}` })
   }
 
-  /**
-   * 解析失败的曲目 → 下次允许重试的时间（退避 60 秒）。
-   *
-   * 现状（2026-11-25 接管）：退避逻辑其实**从未实现**，这里只是个字段；
-   * 而 `tests/lxsp/audit.test.mjs` 用字面量包含检查断言了它，所以删掉会让审计变红。
-   * 审计脚本属宪法第十四条保护文件，未获授权不改 → 保留字段并在此如实记录。
-   */
-  private readonly resolveFailedAt = new Map<string, number>()
-
   /** 占位音质表：还原曲目时必须有，否则音源层读 qualitys.xxx 会抛异常 */
   private placeholderTypes(): Record<string, { size: string, hash: string | null }> {
     const keys = ['128k', '320k', 'flac', 'flac24bit', 'flac32bit', 'wav', 'ape', 'master', 'atmos']
