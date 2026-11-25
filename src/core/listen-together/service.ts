@@ -20,7 +20,7 @@ import { getResolvedUrl, getLastResolvedUrl, isDeadUrl, rememberDeadUrl, remembe
 import { getMusicUrl } from '@/core/music'
 import { setPlayerHooks } from '@/core/player/hooks'
 import { getList } from '@/core/player/playInfo'
-import { playListById, setMusicUrl } from '@/core/player/player'
+import { loadMusicMeta, playListById, setMusicUrl } from '@/core/player/player'
 import { sourceEngine } from '@/core/source'
 import musicSdk from '@/utils/musicSdk'
 import { toNewMusicInfo } from '@/utils'
@@ -275,9 +275,9 @@ class ListenTogetherService {
       on: () => () => {},
       get isController() { return role === 'host' },
       playheadMs: () => room.playheadMs(),
-      play: () => room.control('PLAY'),
-      pause: () => room.control('PAUSE'),
-      seek: (positionMs: number) => room.control('SEEK', { positionMs }),
+      play: () => room.command('PLAY'),
+      pause: () => room.command('PAUSE'),
+      seek: (positionMs: number) => room.command('SEEK', { positionMs }),
       setTrack: (track: { stableKey: string }) => room.control('SET_TRACK', { track }),
       setMode: (mode: string) => room.control('PLAYBACK_MODE', { mode }),
       notifyTrackFinished: () => room.control('TRACK_FINISHED', { trackStableKey: room.currentState.playback.trackStableKey }),
@@ -469,6 +469,8 @@ class ListenTogetherService {
         })
         setPlayMusicInfo(null, info, true)
         setMusicUrl(info as never)
+        // 封面与歌词必须和 setMusicUrl 成对出现，否则房间换歌后就是「能播但没图没词」
+        loadMusicMeta(info as never)
         this.update({ lastError: null, lastEvent: `本机解析并播放：${track.name} - ${track.singer}` })
       })()
       if (canResolveLocally) return true
@@ -505,6 +507,7 @@ class ListenTogetherService {
             _types: this.placeholderTypes(),
           })
           setMusicUrl(info as never)
+          loadMusicMeta(info as never)
           this.update({ lastError: null, lastEvent: `已切到：${track.name} - ${track.singer}` })
           return true
         } catch (error) {
@@ -528,7 +531,9 @@ class ListenTogetherService {
         this.update({ lastError: `本机找不到「${track.name}」`, lastEvent: null })
         return false
       }
-      setMusicUrl(toNewMusicInfo(best) as never)
+      const bestInfo = toNewMusicInfo(best) as never
+      setMusicUrl(bestInfo)
+      loadMusicMeta(bestInfo)
       this.update({ lastError: null, lastEvent: `搜索命中并切歌：${track.name}` })
       return true
     } catch (error) {
@@ -574,28 +579,31 @@ class ListenTogetherService {
 
   /** 控制端：把本地操作同步到房间 */
   pushPlay(): void {
+    if (this.session?.isApplyingRemote()) return
     if (this.p2p) {
       const currentKey = this.p2p.currentState.playback.trackStableKey
       const track = createPlayerAdapter().currentTrack()
       if (track && track.stableKey !== currentKey) {
         void this.pushTrackWithUrl()
       }
-      this.p2p.control('PLAY')
+      this.p2p.command('PLAY')
       return
     }
     this.session?.notifyPlay()
   }
   pushPause(): void {
-    if (this.p2p) { this.p2p.control('PAUSE'); return }
+    if (this.session?.isApplyingRemote()) return
+    if (this.p2p) { this.p2p.command('PAUSE'); return }
     this.session?.notifyPause()
   }
   pushSeek(positionMs?: number): void {
+    if (this.session?.isApplyingRemote()) return
     if (this.p2p) {
       const track = createPlayerAdapter().currentTrack()
       if (track && track.stableKey !== this.p2p.currentState.playback.trackStableKey) {
         this.p2p.control('SET_TRACK', { track })
       }
-      this.p2p.control('SEEK', { positionMs: positionMs ?? playerState.progress.nowPlayTime * 1000 })
+      this.p2p.command('SEEK', { positionMs: positionMs ?? playerState.progress.nowPlayTime * 1000 })
       return
     }
     this.session?.notifySeek(positionMs)
