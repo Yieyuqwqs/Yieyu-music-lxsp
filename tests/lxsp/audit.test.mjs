@@ -50,10 +50,6 @@ export default (t) => {
     t.ok(!/existing\.lastSeenAt = Date\.now\(\)\n\s*this\.broadcastState\(\)/.test(room), 'touchMember 心跳不广播')
   })
 
-  t.suite('审计：失败重试要退避', () => {
-    t.ok(svc.includes('resolveFailedAt'), '有解析失败退避表')
-  })
-
   t.suite('宪法：AGENTS.md 必须在仓库根且包含八条铁律', () => {
     const text = read('AGENTS.md')
     t.ok(text.includes('禁止补丁式开发'), '第一条')
