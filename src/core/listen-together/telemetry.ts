@@ -11,7 +11,6 @@ import TrackPlayer from 'react-native-track-player'
 
 const PREFIX = '[playback]'
 let lastState = ''
-let sampleTimer: ReturnType<typeof setInterval> | null = null
 
 /** 播放状态迁移：Playing / Paused / None / Ended… */
 /** 状态迁移 + 现场快照：能区分「正常换歌」和「播到一半被重置」 */
@@ -43,28 +42,6 @@ export const logPlaybackError = async(error: unknown): Promise<void> => {
     detail.probeError = (err as Error).message
   }
   log.error(`${PREFIX} error=${(error as Error)?.message ?? String(error)} ${JSON.stringify(detail)}`)
-}
-
-/** 采样器：播放中每 2 秒记一次 duration/position，用来证明“真的在出声” */
-export const startPlaybackSampling = (): void => {
-  sampleTimer
-    ? undefined
-    : (sampleTimer = setInterval(() => {
-    void (async() => {
-      try {
-        const duration = await TrackPlayer.getDuration()
-        const position = await TrackPlayer.getPosition()
-        const state = await TrackPlayer.getPlaybackState()
-        log.info(`${PREFIX} sample duration=${(duration ?? 0).toFixed(2)}s position=${(position ?? 0).toFixed(2)}s state=${String((state as { state?: unknown })?.state ?? '?')}`)
-      } catch (error) {
-        log.warn(`${PREFIX} sample failed ${(error as Error).message}`)
-      }
-    })()
-  }, 2000))
-}
-
-export const stopPlaybackSampling = (): void => {
-  sampleTimer && (clearInterval(sampleTimer), (sampleTimer = null))
 }
 
 /** 播放前自检：给定 URL，验证它对 ExoPlayer 是否可播（写入日志，供人查看） */
