@@ -171,6 +171,43 @@ export const setMusicUrl = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem
   })
 }
 
+/**
+ * 加载封面与歌词（**唯一实现**）。
+ *
+ * 根因：这两件事原来只写在 handleRestorePlay / debouncePlay 里，
+ * 任何绕过 debouncePlay 直接调 setMusicUrl 的调用方（例如一起听换歌）
+ * 就会得到「能播但没封面没歌词」的结果。
+ * 现在集中到一个出口，谁要切歌都必须调它。
+ */
+export const loadMusicMeta = (musicInfo: LX.Player.PlayMusic, listId?: string | null) => {
+  const target = () => playerState.playMusicInfo.musicInfo
+  void getPicPath({ musicInfo, listId }).then((url: string) => {
+    if (
+      musicInfo.id != target()?.id ||
+      playerState.musicInfo.pic == url ||
+      playerState.loadErrorPicUrl == url
+    ) return
+    setMusicInfo({ pic: url })
+    global.app_event.picUpdated()
+  })
+
+  void getLyricInfo({ musicInfo }).then((lyricInfo) => {
+    if (musicInfo.id != target()?.id) return
+    setMusicInfo({
+      lrc: lyricInfo.lyric,
+      tlrc: lyricInfo.tlyric,
+      lxlrc: lyricInfo.lxlyric,
+      rlrc: lyricInfo.rlyric,
+      rawlrc: lyricInfo.rawlrcInfo.lyric,
+    })
+    global.app_event.lyricUpdated()
+  }).catch((err) => {
+    console.log(err)
+    if (musicInfo.id != target()?.id) return
+    setStatusText(global.i18n.t('lyric__load_error'))
+  })
+}
+
 // 恢复上次播放的状态
 const handleRestorePlay = async(restorePlayInfo: LX.Player.SavedPlayInfo) => {
   const musicInfo = playerState.playMusicInfo.musicInfo
@@ -184,31 +221,7 @@ const handleRestorePlay = async(restorePlayInfo: LX.Player.SavedPlayInfo) => {
 
   void initTrackInfo(musicInfo, playerState.musicInfo)
 
-  void getPicPath({ musicInfo, listId: playMusicInfo.listId }).then((url: string) => {
-    if (
-      musicInfo.id != playMusicInfo.musicInfo?.id ||
-      playerState.musicInfo.pic == url ||
-      playerState.loadErrorPicUrl == url
-    ) return
-    setMusicInfo({ pic: url })
-    global.app_event.picUpdated()
-  })
-
-  void getLyricInfo({ musicInfo }).then((lyricInfo) => {
-    if (musicInfo.id != playMusicInfo.musicInfo?.id) return
-    setMusicInfo({
-      lrc: lyricInfo.lyric,
-      tlrc: lyricInfo.tlyric,
-      lxlrc: lyricInfo.lxlyric,
-      rlrc: lyricInfo.rlyric,
-      rawlrc: lyricInfo.rawlrcInfo.lyric,
-    })
-    global.app_event.lyricUpdated()
-  }).catch((err) => {
-    console.log(err)
-    if (musicInfo.id != playMusicInfo.musicInfo?.id) return
-    setStatusText(global.i18n.t('lyric__load_error'))
-  })
+  loadMusicMeta(musicInfo, playMusicInfo.listId)
 
   if (settingState.setting['player.togglePlayMethod'] == 'random' && !playMusicInfo.isTempPlay) addPlayedList(playMusicInfo as LX.Player.PlayMusicInfo)
 }
@@ -217,30 +230,7 @@ const handleRestorePlay = async(restorePlayInfo: LX.Player.SavedPlayInfo) => {
 const debouncePlay = debounceBackgroundTimer((musicInfo: LX.Player.PlayMusic) => {
   setMusicUrl(musicInfo)
 
-  void getPicPath({ musicInfo, listId: playerState.playMusicInfo.listId }).then((url: string) => {
-    if (
-      musicInfo.id != playerState.playMusicInfo.musicInfo?.id ||
-      playerState.musicInfo.pic == url ||
-      playerState.loadErrorPicUrl == url) return
-    setMusicInfo({ pic: url })
-    global.app_event.picUpdated()
-  })
-
-  void getLyricInfo({ musicInfo }).then((lyricInfo) => {
-    if (musicInfo.id != playerState.playMusicInfo.musicInfo?.id) return
-    setMusicInfo({
-      lrc: lyricInfo.lyric,
-      tlrc: lyricInfo.tlyric,
-      lxlrc: lyricInfo.lxlyric,
-      rlrc: lyricInfo.rlyric,
-      rawlrc: lyricInfo.rawlrcInfo.lyric,
-    })
-    global.app_event.lyricUpdated()
-  }).catch((err) => {
-    console.log(err)
-    if (musicInfo.id != playerState.playMusicInfo.musicInfo?.id) return
-    setStatusText(global.i18n.t('lyric__load_error'))
-  })
+  loadMusicMeta(musicInfo, playerState.playMusicInfo.listId)
 }, 200)
 
 // 处理音乐播放
