@@ -8,6 +8,10 @@
 | [RUNBOOK-gateway-verify.md](./RUNBOOK-gateway-verify.md) | **验网关**：必查四步、失败样本含义、三个怀疑点 |
 | [RUNBOOK-release.md](./RUNBOOK-release.md) | **发布**：无 git 如何推送、如何触发构建、如何取日志、构建前必须全绿 |
 | [TESTING-and-CONSTITUTION.md](./TESTING-and-CONSTITUTION.md) | **测试与合规**：36 项测试分层、宪法 1–14 条对应校验、第十四条授权流程、交付格式 |
+| [POSTMORTEM-2026-11-25.md](./POSTMORTEM-2026-11-25.md) | **复盘**：时间线、我犯的 4 个错误、做对的 3 件事、30 分钟重来版 |
+| [ENVIRONMENT-setup.md](./ENVIRONMENT-setup.md) | **环境**：本机没有 git/gh/adb 的事实、必需路径、起网关、跑测试 |
+| [PROTOCOL-reference.md](./PROTOCOL-reference.md) | **协议**：房间消息表、状态压缩格式、LXSP v2 端点与错误码、直链生命周期 |
+| [FAQ.md](./FAQ.md) | **FAQ**：10 个高频问题（00:00、补丁、成员权限、CI 红、已知未解） |
 | latest.md | 自动生成（`node tools/handover.mjs`），记录最近一次命令的真实输出；**手改会被覆盖** |
 
 ## 最短上手路径
