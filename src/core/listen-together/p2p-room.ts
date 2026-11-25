@@ -38,6 +38,9 @@ const BROADCAST_MS = 3_000 // 兜底广播：3 秒一次（真机消息几十毫
 
 export const topicOf = (roomId: string): string => `lx-listen/${roomId}`
 
+/** 允许「任何成员」触发的控制类型（房主执行，成员只发命令） */
+const CO_CONTROL: Record<string, string> = { PLAY: 'PLAY', PAUSE: 'PAUSE', SEEK: 'SEEK' }
+
 export class P2PRoom {
   readonly roomId: string
   readonly role: P2PRole
@@ -348,6 +351,21 @@ export class P2PRoom {
     if (this.applyControl(type, payload as never)) this.broadcastState()
   }
 
+  /**
+   * 任何成员都能用的播放控制（一起听是共享歌单，播放/暂停/进度不该只有房主能按）。
+   *
+   * 结构：房主仍是**唯一写状态的人**（第三条：状态只有一个来源），
+   * 成员的按下变成一条 CMD 消息，由房主执行后广播 —— 不是成员直接改状态，也不会互相拉扯。
+   * 切歌与改模式仍走 request（那会动队列语义，保留房主决定权）。
+   */
+  command(type: 'PLAY' | 'PAUSE' | 'SEEK', payload: Record<string, unknown> = {}): void {
+    if (!CO_CONTROL[type]) return
+    if (this.role === 'host') { this.control(type, payload); return }
+    this.mqtt.publish(topicOf(this.roomId), JSON.stringify({
+      type: 'CMD', c: type, from: this.memberId, memberId: this.memberId, ...payload,
+    }))
+  }
+
   // ---------------------------------------------------------- 成员：请求
 
   /** 抢一次完整状态（新加入、怀疑丢包时调） */
@@ -454,6 +472,14 @@ export class P2PRoom {
     }
     if (this.role === 'host' && (message.type === 'QUEUE_ADD' || message.type === 'QUEUE_REMOVE')) {
       this.control(message.type, message as never)
+      return
+    }
+
+    // 房主：执行成员的播放控制命令（不受「必须同一首歌」的限制：两个人随时都能暂停/继续）
+    if (this.role === 'host' && message.type === 'CMD') {
+      const cmd = String(message.c ?? '')
+      if (!CO_CONTROL[cmd]) return
+      this.control(cmd, message as never)
       return
     }
 
