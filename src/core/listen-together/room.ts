@@ -159,15 +159,15 @@ export class RoomSession {
   // ------------------------------------------------ 控制端：本地 → 房间
 
   notifyPlay(): void {
-    this.isSendingAllowed() && this.client.play()
+    this.canSendTransport() && this.client.play()
   }
 
   notifyPause(): void {
-    this.isSendingAllowed() && this.client.pause()
+    this.canSendTransport() && this.client.pause()
   }
 
   notifySeek(positionMs?: number): void {
-    this.isSendingAllowed() && this.client.seek(positionMs ?? this.player.positionMs())
+    this.canSendTransport() && this.client.seek(positionMs ?? this.player.positionMs())
   }
 
   notifyTrackChanged(track?: TrackRef, index?: number): void {
@@ -191,10 +191,23 @@ export class RoomSession {
   requestPause(): void { this.client.requestPause() }
   requestSeek(positionMs?: number): void { this.client.requestSeek(positionMs ?? this.player.positionMs()) }
 
-  /** 控制端才能改房间；成员端改走 request* */
+  /**
+   * 播放/暂停/进度：房主与成员都能按（一起听是共享歌单）。
+   * 唯一例外是「正在应用远端状态」，否则自己按下的动作会被远端广播回环再执行一次。
+   */
+  private canSendTransport(): boolean {
+    return !this.applyingRemote
+  }
+
+  /** 切歌/改模式会动队列语义：只有控制端能改，其余走 request* */
   private isSendingAllowed(): boolean {
     if (this.applyingRemote) return false
     return this.client.isController
+  }
+
+  /** 成员端正在应用远端状态时不要把回环动作再发出去 */
+  isApplyingRemote(): boolean {
+    return this.applyingRemote
   }
 
   private emitAndPush(list: RoomSessionEvent[], event: RoomSessionEvent): void {
