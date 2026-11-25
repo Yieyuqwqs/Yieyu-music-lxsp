@@ -14,6 +14,14 @@ let lastState = ''
 let sampleTimer: ReturnType<typeof setInterval> | null = null
 
 /** 播放状态迁移：Playing / Paused / None / Ended… */
+/** 状态迁移 + 现场快照：能区分「正常换歌」和「播到一半被重置」 */
+export const logPlaybackStateWithSnapshot = async(state: string): Promise<void> => {
+  const tp = TrackPlayer as unknown as Record<string, undefined | (() => Promise<unknown>)>
+  const duration = Number(await tp.getDuration?.() ?? 0)
+  const position = Number(await tp.getPosition?.() ?? 0)
+  log.info(`${PREFIX} state=${state} pos=${Math.round(position)}ms dur=${Math.round(duration)}ms`)
+}
+
 export const logPlaybackState = (state: string, detail: Record<string, unknown> = {}): void => {
   state === lastState
     ? undefined
