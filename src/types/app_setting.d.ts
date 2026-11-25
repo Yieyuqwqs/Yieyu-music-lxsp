@@ -44,11 +44,6 @@ declare global {
       /** 上次加入的房间号，方便重连 */
       'common.listenTogetherRoom': string
 
-      /** 一起听：把下一首预缓冲进播放器（切歌更快，占一点内存） */
-      'common.listenTogetherPrebuffer': boolean
-
-
-
       /**
        * 音源名称类型，原名、别名
        */
