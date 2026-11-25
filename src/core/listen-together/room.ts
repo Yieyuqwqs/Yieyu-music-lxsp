@@ -64,6 +64,10 @@ export class RoomSession {
   private started = false
   /** 成员侧：最后一次房间状态，用来做强制对齐 */
   private lastState: RoomState | null = null
+  /** 已应用过的房间状态版本（显式声明：之前是运行时动态属性，类型上并不存在） */
+  private lastAppliedVersion: number | null = null
+  /** 远端换歌后待执行的「起播对齐」位置；消费一次即清空（不变量：每次换歌最多 seek 一次） */
+  private pendingAlignMs: number | null = null
 
   constructor(options: RoomSessionOptions) {
     this.client = options.client
@@ -85,6 +89,9 @@ export class RoomSession {
   stop(): void {
     this.started = false
     this.lastState = null
+    this.lastAppliedVersion = null
+    this.lastRemoteTrackKey = null
+    this.pendingAlignMs = null
     this.unsubscribe?.()
     this.unsubscribe = null
   }
@@ -107,6 +114,10 @@ export class RoomSession {
       this.lastRemoteTrackKey = remoteTrackKey
       const track = state.queue[state.currentIndex] ?? null
       if (track) {
+        // 起播对齐的唯一入口：远端换歌后记下「房间此刻播到哪」，
+        // 等本机切歌成功（switchToTrack 完成）再消费这一条位置，恰好 seek 一次。
+        // 不在 applyState 里直接 seek：此刻本机活动轨还是上一首，seek 会落在错的曲目上。
+        this.pendingAlignMs = Math.max(0, this.client.playheadMs())
         const event: RoomSessionEvent = { type: 'track_changed', track, remote: true }
         events.push(event)
         this.emit(event)
@@ -124,9 +135,25 @@ export class RoomSession {
       this.emit(event)
     }
 
-    // 位置对齐只发生在「换歌起播」那一刻（startTrackAt / scheduleMemberStart），
-    // 这里不再做任何 seek 或调速——避免周期性把用户拽回房间位置。
+    // 位置对齐只发生在「换歌起播」那一刻（见 alignAfterSwitch），
+    // 这里不做任何周期性 seek 或调速——避免把用户从房间位置反复拽走。
     return events
+  }
+
+  /**
+   * 远端换歌、本机切歌成功之后调用：把成员落到房间播放头（一次性）。
+   *
+   * 不变量：每次远端换歌最多 seek 一次；没有待对齐位置（控制端 / 同曲 / 已消费）时是 no-op。
+   * 返回实际 seek 到的毫秒数，null 表示没有对齐动作（便于调用方与测试断言）。
+   */
+  alignAfterSwitch(): number | null {
+    const target = this.pendingAlignMs
+    if (target == null) return null
+    this.pendingAlignMs = null
+    this.applyingRemote = true
+    try { this.player.seek(target) } finally { this.applyingRemote = false }
+    this.emit({ type: 'applied', action: 'seek', positionMs: target })
+    return target
   }
 
   // ------------------------------------------------ 控制端：本地 → 房间
