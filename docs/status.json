@@ -2,6 +2,15 @@
   "updatedAt": "2026-11-28",
   "claims": [
     {
+      "id": "console-strip-release",
+      "claim": "release 构建经 Babel 插件裁掉 console.log/info/debug/trace，warn/error 保留；dev 不裁",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/build-config.test.mjs（含 caller/cache 顺序约束）",
+        "Actions run（6c20fa2）构建成功"
+      ]
+    },
+    {
       "id": "theme-translucent-optin",
       "claim": "主题可通过 extInfo 覆盖 c-content-background/c-font/c-font-label，未声明的主题行为不变",
       "source": "实测",
@@ -64,11 +73,11 @@
     },
     {
       "id": "apk-release-verified",
-      "claim": "APK 构建与发版闭环：CI 构建成功、两个 Release 各 5 个客户端包、公库清单指向当前版本（Aurora-77/82）",
+      "claim": "APK 构建与发版闭环：release 包经 Babel 裁剪 console 后仍构建成功，双 Release 各 5 包，公库清单指向 Aurora-78/83",
       "source": "实测",
       "evidence": [
-        "Actions Build APK success（d45ce4d, 502s）",
-        "gh api /repos/Yieyuqwqs/Yieyu-Update/contents/update.json"
+        "Actions Build APK success（6c20fa2, 638s）",
+        "gh api Yieyu-Update/contents/update.json"
       ]
     },
     {
