@@ -15,6 +15,7 @@ import { useI18n } from '@/lang'
 import { useSettingValue } from '@/store/setting/hook'
 import { updateSetting } from '@/core/common'
 import { getEngineStatus, probeEndpoints, setApiSource, type SourceEngineStatus } from '@/core/apiSource'
+import { checkEndpointSecurity } from '@/core/source/protocol'
 import { useTheme } from '@/store/theme/hook'
 
 const refreshDelay = 800
@@ -98,6 +99,21 @@ export default memo(() => {
   )
   const online = status.endpoints.filter(item => item.ok).length
 
+  // 只对「填了地址」的行给安全提示：公网明文会被拦截，本机/局域网明文只是提醒
+  const securityNotes = useMemo(() => rows
+    .map((row, index) => ({ index, security: checkEndpointSecurity(row.url) }))
+    .filter(item => item.security.level !== 'invalid' && !item.security.ok), [rows])
+
+  /**
+   * 端点列表按「URL 匹配」回填标题。
+   * 以前按数组下标套 ROW_LABELS：主地址留空时，备用 1 会被显示成「主地址」（错位）。
+   */
+  const labelOf = useCallback((baseUrl: string, fallbackIndex: number) => {
+    const normalize = (value: string) => value.trim().replace(/\/+$/, '')
+    const index = rows.findIndex(row => row.url.trim() && normalize(row.url) === normalize(baseUrl))
+    return ROW_LABELS[index >= 0 ? index : fallbackIndex] ?? '备用'
+  }, [rows])
+
   return (
     <SubTitle title={t('setting_basic_source')}>
       <View style={styles.list}>
@@ -160,12 +176,23 @@ export default memo(() => {
         {'每个地址可以用自己的密钥；备用密钥留空就用主密钥。主地址超过 0.1 秒没结果会自动并发请求备用。'}
       </Text>
 
+      <Text size={12} color={theme['c-500']} style={styles.hint}>
+        {'安全：密钥只存在本机（不会再随包发布）。公网地址必须用 https —— 本机/局域网地址（127.0.0.1、192.168.x 等）才允许 http。'}
+      </Text>
+      {
+        securityNotes.map(item => (
+          <Text key={`sec-${item.index}`} size={12} color={theme['c-font-label']} style={styles.hint}>
+            {`${ROW_LABELS[item.index]}：${item.security.reason ?? '地址不安全'}`}
+          </Text>
+        ))
+      }
+
       <View style={styles.list}>
         {
           status.endpoints.length
             ? status.endpoints.map((item, index) => (
               <Text key={`${item.baseUrl}-${index}`} size={12} color={item.ok ? theme['c-500'] : theme['c-font-label']} style={styles.endpoint}>
-                {`${item.ok ? '●' : '○'} [${ROW_LABELS[index] ?? '备用'}] ${item.baseUrl}\n   ${item.ok ? `${item.provider ?? ''}${item.version ? ' v' + item.version : ''} · ${item.sources?.length ?? 0} 源` : (item.error ?? '未连接')}${item.latencyMs ? ` · ${item.latencyMs}ms` : ''}`}
+                {`${item.ok ? '●' : '○'} [${labelOf(item.baseUrl, index)}] ${item.baseUrl}\n   ${item.ok ? `${item.provider ?? ''}${item.version ? ' v' + item.version : ''} · ${item.sources?.length ?? 0} 源` : (item.error ?? '未连接')}${item.latencyMs ? ` · ${item.latencyMs}ms` : ''}`}
               </Text>
             ))
             : <Text size={12} color={theme['c-500']}>填主地址 + 密钥，点「保存并重连」；备用地址可留空</Text>

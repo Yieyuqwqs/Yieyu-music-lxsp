@@ -146,6 +146,56 @@
       "evidence": [
         "node tools/read-autocheck.mjs"
       ]
+    },
+    {
+      "id": "credential-single-channel",
+      "claim": "每个请求只发一种凭据（lx-source 只发 ?key=，wwwweb/json 只发 X-Api-Key），不再三处齐发",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/security.test.mjs",
+        "本机网关实测：header/bearer 403，?key= 200"
+      ]
+    },
+    {
+      "id": "public-cleartext-blocked",
+      "claim": "公网明文 http 端点在发请求前被拦截；本机/局域网 http 放行",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/security.test.mjs（含 fetched===0 断言）"
+      ]
+    },
+    {
+      "id": "log-redaction",
+      "claim": "URL 查询串里的 key/token/apikey 在日志中一律脱敏",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/security.test.mjs"
+      ]
+    },
+    {
+      "id": "no-bundled-secret",
+      "claim": "APK 不再内置任何默认 API 密钥",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/security.test.mjs（源码扫描）"
+      ]
+    },
+    {
+      "id": "admin-token-keystore",
+      "claim": "管理端 GitHub Token 走 Android Keystore 硬件加密，不可用时降级为内存并在界面说明",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/secure-store.test.mjs（3 条：落盘/降级/失败降级）",
+        "android/authz/.../SecretStore.java"
+      ]
+    },
+    {
+      "id": "real-gateway-e2e",
+      "claim": "用仓库 Provider 代码打本机真实网关：只发 ?key= 仍能取到直链（206, 4096B audio/mpeg）",
+      "source": "实测",
+      "evidence": [
+        "node --import ./tests/lxsp/hook.mjs verify-auth.mjs（本机 1101）"
+      ]
     }
   ]
 }

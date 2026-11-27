@@ -67,8 +67,16 @@ interface CallOptions {
   timeoutMs?: number
   signal?: RequestContext['signal']
   token?: string | null
-  /** 鉴权放哪：header(X-Api-Key) / bearer / query(key) / both */
-  auth?: 'header' | 'bearer' | 'query' | 'both'
+  /**
+   * 鉴权放在哪里。
+   *
+   * 重要：这里**故意不再提供 "both"**。以前每个请求都同时发 X-Api-Key + Authorization + ?key=，
+   * 同一个密钥在一趟请求里出现三次，泄漏面直接 ×3（网关日志里就能看到 ?key=）。
+   * 现在按族只发一种：
+   *   · lx-source：只发 query（实测 header/bearer 都是 403，协议硬要求）
+   *   · wwwweb / api-json：只发 header
+   */
+  auth?: 'header' | 'bearer' | 'query'
 }
 
 const callApi = async(fetchImpl: FetchLike, url: string, options: CallOptions): Promise<{ status: number, body: Record<string, unknown> | null }> => {
@@ -84,13 +92,13 @@ const callApi = async(fetchImpl: FetchLike, url: string, options: CallOptions): 
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
   const token = options.token ?? null
-  const auth = options.auth ?? 'both'
+  const auth = options.auth ?? 'header'
   let target = url
   if (token) {
-    // both = 三种方式全带：不同族的后端各吃一种，多余的头/参数它们会忽略
-    if (auth === 'header' || auth === 'both') headers['X-Api-Key'] = token
-    if (auth === 'bearer' || auth === 'both') headers.Authorization = `Bearer ${token}`
-    if (auth === 'query' || auth === 'both') target += (target.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(token)
+    // 只发一种：同族的后端各吃一种，多余的头/参数不但没用，还会把密钥重复暴露
+    if (auth === 'header') headers['X-Api-Key'] = token
+    else if (auth === 'bearer') headers.Authorization = `Bearer ${token}`
+    else if (auth === 'query') target += (target.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(token)
   }
 
   try {
@@ -214,7 +222,7 @@ export const probeApiProfiles = async(options: {
 
   // 1) lx-source 系：/api/v0/ 会回一份自述 JSON
   const probeLxSource = async(): Promise<ApiProfileProbe | null> => {
-    const result = await callApi(fetchImpl, `${baseUrl}/api/v0/`, { timeoutMs, token, auth: 'both' })
+    const result = await callApi(fetchImpl, `${baseUrl}/api/v0/`, { timeoutMs, token, auth: 'query' })
     const sourceMap = result.body ? asRecord(result.body.source) : null
     if (!sourceMap) return null
     const sources: ProfileSourceDecl[] = []
@@ -240,7 +248,7 @@ export const probeApiProfiles = async(options: {
       body: { source: 'kw', musicId: '0', quality: '128k' },
       timeoutMs,
       token,
-      auth: 'both',
+      auth: 'header',
     })
     const body = result.body
     if (!body) return null
@@ -255,7 +263,7 @@ export const probeApiProfiles = async(options: {
       body: { source: 'kw', id: '0', quality: '128k', musicId: '0' },
       timeoutMs,
       token,
-      auth: 'both',
+      auth: 'header',
     })
     const body = result.body
     if (body && (extractCode(body) !== undefined || !!extractUrl(body))) {
@@ -338,7 +346,7 @@ export class ApiProfileProvider implements SourceProvider {
 
     if (this.isLxSource) {
       const result = await callApi(this.fetchImpl, `${this.probe.baseUrl}/api/v0/url/${query.source}/${encodeURIComponent(query.id)}/${encodeURIComponent(quality)}`, {
-        token: this.token, auth: 'both', timeoutMs, signal: ctx.signal,
+        token: this.token, auth: 'query', timeoutMs, signal: ctx.signal,
       })
       body = result.body
       status = result.status
@@ -348,7 +356,7 @@ export class ApiProfileProvider implements SourceProvider {
         ? { source: query.source, musicId: query.id, quality, name: query.name, singer: query.singer }
         : { source: query.source, id: query.id, musicId: query.id, quality, name: query.name, singer: query.singer }
       const result = await callApi(this.fetchImpl, `${this.probe.baseUrl}${path}`, {
-        method: 'POST', body: payload, token: this.token, auth: 'both', timeoutMs, signal: ctx.signal,
+        method: 'POST', body: payload, token: this.token, auth: 'header', timeoutMs, signal: ctx.signal,
       })
       body = result.body
       status = result.status
@@ -356,7 +364,7 @@ export class ApiProfileProvider implements SourceProvider {
       if (!extractUrl(body)) {
         try {
           const fallback = await callApi(this.fetchImpl, `${this.probe.baseUrl}/url/${query.source}/${encodeURIComponent(query.id)}?quality=${encodeURIComponent(quality)}`, {
-            token: this.token, auth: 'both', timeoutMs, signal: ctx.signal,
+            token: this.token, auth: 'header', timeoutMs, signal: ctx.signal,
           })
           if (extractUrl(fallback.body)) {
             body = fallback.body
@@ -386,7 +394,7 @@ export class ApiProfileProvider implements SourceProvider {
   async lyric(query: TrackQuery, ctx: RequestContext = {}): Promise<LyricResult> {
     if (!this.isLxSource) throw new LxspError('unsupported', '该接口未声明歌词能力')
     const result = await callApi(this.fetchImpl, `${this.probe.baseUrl}/api/v0/lrc/${query.source}/${encodeURIComponent(query.id)}/`, {
-      token: this.token, auth: 'both', timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal,
+      token: this.token, auth: 'query', timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal,
     })
     const data = result.body && typeof result.body.data === 'string' ? result.body.data : ''
     if (!data) throw mapError(extractMessage(result.body) || '无歌词', extractCode(result.body) ?? result.status)
@@ -396,7 +404,7 @@ export class ApiProfileProvider implements SourceProvider {
   async pic(query: TrackQuery, ctx: RequestContext = {}): Promise<string> {
     if (!this.isLxSource) throw new LxspError('unsupported', '该接口未声明封面能力')
     const result = await callApi(this.fetchImpl, `${this.probe.baseUrl}/api/v0/pic/${query.source}/${encodeURIComponent(query.id)}/`, {
-      token: this.token, auth: 'both', timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal,
+      token: this.token, auth: 'query', timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal,
     })
     const data = result.body && typeof result.body.data === 'string' ? result.body.data : ''
     if (!/^https?:\/\//i.test(data)) throw mapError(extractMessage(result.body) || '无封面', extractCode(result.body) ?? result.status)

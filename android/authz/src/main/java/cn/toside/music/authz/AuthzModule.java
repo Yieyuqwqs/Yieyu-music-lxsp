@@ -69,6 +69,8 @@ public final class AuthzModule extends ReactContextBaseJavaModule {
 
   private final ReactApplicationContext reactContext;
   private final SecureTokenStore tokenStore;
+  /** 通用小密钥抽屉（Keystore，不要求指纹）：管理端 Token 之类 */
+  private final SecretStore secretStore;
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private BroadcastReceiver screenOffReceiver;
   private boolean promptRunning = false;
@@ -78,6 +80,7 @@ public final class AuthzModule extends ReactContextBaseJavaModule {
     super(context);
     this.reactContext = context;
     this.tokenStore = new SecureTokenStore(context);
+    this.secretStore = new SecretStore(context);
     registerScreenOffReceiver();
   }
 
@@ -223,6 +226,58 @@ public final class AuthzModule extends ReactContextBaseJavaModule {
   }
 
   /** 本机是否已有加密授权（不触发指纹） */
+/* ------------------------- 通用小密钥（Keystore，不要求指纹） ------------------------- */
+
+  /**
+   * 写入一条小密钥（AES-256-GCM，密钥在 Keystore 里永不导出）。
+   * 失败时 Promise.reject，JS 侧必须降级成"只放内存"，禁止回落到明文存储。
+   */
+  @ReactMethod
+  public void secretSet(String name, String value, Promise promise) {
+    if (name == null || name.length() == 0) {
+      promise.reject("AUTHZ_SECRET", "name 不能为空");
+      return;
+    }
+    if (value == null) {
+      promise.reject("AUTHZ_SECRET", "value 不能为空");
+      return;
+    }
+    try {
+      secretStore.put(name, value);
+      promise.resolve(null);
+    } catch (Throwable error) {
+      promise.reject("AUTHZ_SECRET", message(error));
+    }
+  }
+
+  /** 读取；没有/解不开都 resolve(null)，由 JS 决定后续（绝不返回明文兜底） */
+  @ReactMethod
+  public void secretGet(String name, Promise promise) {
+    if (name == null || name.length() == 0) {
+      promise.reject("AUTHZ_SECRET", "name 不能为空");
+      return;
+    }
+    try {
+      promise.resolve(secretStore.get(name));
+    } catch (Throwable error) {
+      promise.reject("AUTHZ_SECRET", message(error));
+    }
+  }
+
+  @ReactMethod
+  public void secretRemove(String name, Promise promise) {
+    if (name == null || name.length() == 0) {
+      promise.reject("AUTHZ_SECRET", "name 不能为空");
+      return;
+    }
+    try {
+      secretStore.remove(name);
+      promise.resolve(null);
+    } catch (Throwable error) {
+      promise.reject("AUTHZ_SECRET", message(error));
+    }
+  }
+
   @ReactMethod
   public void hasToken(Promise promise) {
     try {

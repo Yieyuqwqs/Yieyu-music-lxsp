@@ -15,7 +15,7 @@ import { ApiProfileProvider } from './api-profiles'
 import { WasmPluginProvider, type WasmBridge, type WasmPluginConfig } from './wasm-plugin'
 import { toLegacyQuery, toLegacyMusicItem } from './local'
 import { toLxspError } from './errors'
-import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
+import { DEFAULT_LIMITS, checkEndpointSecurity, normalizeBaseUrl, redactUrl } from './protocol'
 import type { ProviderHealth, SourceProvider } from './types'
 
 /** 端点形态缓存有效期：10 分钟内重复重连不再探测 */
@@ -161,6 +161,15 @@ export class SourceEngine {
     if (!baseUrl) return { status: null, providers }
 
     const startedAt = Date.now()
+    // 安全闸门：公网地址不允许明文 http（lx-source 族把密钥放在 ?key= 里，明文等于公开密钥）
+    const security = checkEndpointSecurity(baseUrl)
+    if (!security.ok) {
+      log('warn', `endpoint rejected by security policy: ${redactUrl(baseUrl)} -> ${security.reason ?? ''}`)
+      return {
+        status: { baseUrl, ok: false, error: `已按安全策略拦截：${security.reason ?? '地址不安全'}`, latencyMs: Date.now() - startedAt },
+        providers,
+      }
+    }
     const token = endpoint.token ?? options.token ?? null
     const fetchImpl = options.fetchImpl ?? resolveFetch()
     if (!fetchImpl) {

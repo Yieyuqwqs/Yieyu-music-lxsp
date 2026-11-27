@@ -4,8 +4,8 @@ const defaultSetting: LX.AppSetting = {
   'common.langId': null,
   'common.apiSource': 'lxsp',
   'common.lxspEndpoints': 'http://127.0.0.1:1101',
-  // 本机网关默认 key（与 lx-server/config.json 的 auth.keys 对应）；换服务端 key 时这里同步改
-  'common.lxspToken': 'Cyb-P2077-n30h4ck3r-0X',
+  // 不再内置任何默认密钥：密钥属于用户自己的网关，写进 APK 等于随包公开（旧版本就是这么泄的）
+  'common.lxspToken': '',
   'common.wasmPlugins': '',
   'common.listenTogetherServer': 'p2p',
   'common.listenTogetherRoom': '',

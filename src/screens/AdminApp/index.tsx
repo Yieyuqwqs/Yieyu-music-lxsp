@@ -3,6 +3,7 @@ import {
   Alert, Image, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { getSecret, setSecret } from '@/utils/nativeModules/secureStore'
 
 import { sha256 } from '@/utils/sha256'
 import { rsaSign, rsaVerify } from '@/utils/rsa'
@@ -116,9 +117,12 @@ const AdminApp = memo(() => {
     let alive = true
     void (async() => {
       try {
+        // 老版本把 Token 明文存在 AsyncStorage：升级后立刻抹掉，别留一份明文在原地
+        const legacy = await AsyncStorage.getItem(LEGACY_TOKEN_STORE_KEY).catch(() => null)
+        if (legacy) await AsyncStorage.removeItem(LEGACY_TOKEN_STORE_KEY).catch(() => {})
         const [session, savedToken] = await Promise.all([
           AsyncStorage.getItem(SESSION_STORE_KEY),
-          AsyncStorage.getItem(TOKEN_STORE_KEY),
+          getSecret(TOKEN_STORE_KEY),
         ])
         if (!alive) return
         if (savedToken) { setToken(savedToken); setTokenSaved(true) }
@@ -165,12 +169,12 @@ const AdminApp = memo(() => {
   // ---------------------------------------------------------------- 云端文件
 
   const persistToken = useCallback(async() => {
-    try {
-      await AsyncStorage.setItem(TOKEN_STORE_KEY, token.trim())
-      setTokenSaved(true)
-      Alert.alert('已保存', 'Token 只存在本机，不会写进 APK')
-    } catch (err: any) {
-      Alert.alert('保存失败', String(err?.message ?? err))
+    const result = await setSecret(TOKEN_STORE_KEY, token.trim())
+    setTokenSaved(true)
+    if (result.persisted) {
+      Alert.alert('已保存', 'Token 已用系统 Keystore 硬件加密保存，不会写进 APK、也不再是明文。')
+    } else {
+      Alert.alert('只在本机内存生效', `${result.reason ?? '硬件加密不可用'}\n\n关闭应用后需要重新粘贴 Token。`)
     }
   }, [token])
 

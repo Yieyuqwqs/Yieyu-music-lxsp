@@ -134,3 +134,92 @@ export const PROFILE_PRIORITY: Readonly<Record<string, number>> = {
 
 /** 生成追踪 id：前缀 + 时间戳 + 随机，足够日志对齐 */
 export const createTraceId = (): string => `lx_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
+
+/* ------------------------- 安全策略（端点地址 / 日志脱敏） ------------------------- */
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'])
+
+/** 取 host（不含端口）；Hermes 上 new URL 行为不稳，用正则 */
+export const hostOf = (url: string): string => {
+  const match = String(url ?? '').trim().match(/^[a-z][a-z0-9+.-]*:\/\/([^/?#]+)/i)
+  if (!match) return ''
+  let host = match[1].toLowerCase()
+  // 去掉端口（IPv6 的 [::1]:8080 要单独处理）
+  if (host.startsWith('[')) {
+    const end = host.indexOf(']')
+    return end < 0 ? host : host.slice(0, end + 1)
+  }
+  const colon = host.indexOf(':')
+  return colon < 0 ? host : host.slice(0, colon)
+}
+
+/** 本机 / 局域网地址：这些地方用 http 是可接受的 */
+export const isPrivateHost = (host: string): boolean => {
+  const value = String(host ?? '').toLowerCase()
+  if (!value) return false
+  if (LOOPBACK_HOSTS.has(value)) return true
+  if (value.endsWith('.local') || value.endsWith('.lan')) return true
+  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(value)
+  if (!ipv4) return false
+  const [a, b] = [Number(ipv4[1]), Number(ipv4[2])]
+  if (a === 127 || a === 10) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 169 && b === 254) return true // 链路本地
+  return false
+}
+
+export type EndpointSecurityLevel = 'secure' | 'local' | 'insecure' | 'invalid'
+
+export interface EndpointSecurity {
+  level: EndpointSecurityLevel
+  /** 能否使用（insecure / invalid 为 false） */
+  ok: boolean
+  /** 给 UI 的说明（ok 时也可能有提醒） */
+  reason?: string
+}
+
+/**
+ * 端点地址的安全策略。
+ *
+ * 根因：lx-source 族只认 `?key=`（实测：header / bearer 都是 403），密钥必然出现在 URL 里 ——
+ * 那么对公网地址用 http 就等于把密钥明文广播到链路上（网关日志也会原样打印）。
+ * 所以：公网地址必须 https；本机/局域网地址允许 http（但 UI 会提醒）。
+ */
+export const checkEndpointSecurity = (baseUrl: string): EndpointSecurity => {
+  const url = String(baseUrl ?? '').trim()
+  if (!url) return { level: 'invalid', ok: false, reason: '地址为空' }
+  const scheme = (/^([a-z][a-z0-9+.-]*):\/\//i.exec(url)?.[1] ?? '').toLowerCase()
+  if (scheme !== 'http' && scheme !== 'https') {
+    return { level: 'invalid', ok: false, reason: `只支持 http/https，实际是 ${scheme || '未知协议'}` }
+  }
+  const host = hostOf(url)
+  if (!host) return { level: 'invalid', ok: false, reason: '地址里没有主机名' }
+  if (scheme === 'https') return { level: 'secure', ok: true }
+  if (isPrivateHost(host)) {
+    return { level: 'local', ok: true, reason: '本机/局域网明文 http（密钥只在本机或局域网内传输）' }
+  }
+  return {
+    level: 'insecure',
+    ok: false,
+    reason: `公网地址不允许明文 http（${host}）：lx-source 族把密钥放在 ?key= 里，明文传输等于公开密钥，请改用 https`,
+  }
+}
+
+const SECRET_QUERY_KEYS = /^(key|token|apikey|api_key|api-key|access_token|auth|secret|pwd|password)$/i
+
+/** 日志脱敏：把 URL 查询串里的密钥换成 ***，避免 key 进 logcat / 上报文件 */
+export const redactUrl = (url: string): string => {
+  const text = String(url ?? '')
+  const index = text.indexOf('?')
+  if (index < 0) return text
+  const head = text.slice(0, index)
+  const query = text.slice(index + 1)
+  const masked = query.split('&').map((pair) => {
+    const eq = pair.indexOf('=')
+    if (eq < 0) return pair
+    const key = pair.slice(0, eq)
+    return SECRET_QUERY_KEYS.test(decodeURIComponent(key)) ? `${key}=***` : pair
+  })
+  return `${head}?${masked.join('&')}`
+}

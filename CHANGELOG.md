@@ -6,6 +6,19 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-76 - 2026-11-28
+
+### 安全
+
+- 凭据三处齐发（X-Api-Key + Authorization + `?key=`）→ 按族只发一种，lx-source 只走 query
+- 公网明文 http 端点 → 引擎在发请求前拦截；本机/局域网 http 放行并在设置页提示
+- 日志里的 URL 查询串密钥 → `redactUrl()` 脱敏
+- APK 内置默认密钥（`common.lxspToken`）→ 清空
+- 管理端 GitHub PAT 明文存 AsyncStorage → Android Keystore（`SecretStore`）+ 旧明文自动清理 + 内存降级
+
+### 修复
+
+- 设置页端点标题按下标显示，主地址留空时备用 1 被误标为「主地址」
 ## 1.9-Aurora-75 - 2026-11-28
 
 ### 修复
