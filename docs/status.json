@@ -1,6 +1,58 @@
 {
-  "updatedAt": "2026-11-27",
+  "updatedAt": "2026-11-28",
   "claims": [
+    {
+      "id": "errors-visible",
+      "claim": "换源/换音质/搜索失败时，每个音源的真实原因会汇总抛出并在界面显示（不再只 console.log）",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/attempt-errors.test.mjs（5 项行为 + 4 项结构契约）",
+        "node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs"
+      ]
+    },
+    {
+      "id": "search-all-failed",
+      "claim": "多源搜索全部失败时抛 AllSourcesFailedError，不再返回空列表冒充「没有结果」",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/attempt-errors.test.mjs",
+        "src/core/search/music.ts（okCount 判定）"
+      ]
+    },
+    {
+      "id": "download-dir-visible",
+      "claim": "下载目录回退不再静默：下载页显示不可写原因与实际目录；Android 13+ 不再申请失效的 WRITE_EXTERNAL_STORAGE",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/attempt-errors.test.mjs（下载目录结构契约）",
+        "src/core/download/index.ts（getSaveDirNotice）"
+      ]
+    },
+    {
+      "id": "sync-auth-parse-guard",
+      "claim": "同步鉴权的坏 JSON 走 authFailed + 日志，不再把 SyntaxError 抛给用户",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/attempt-errors.test.mjs（同步鉴权契约）"
+      ]
+    },
+    {
+      "id": "apk-release-verified",
+      "claim": "APK 构建与发版已闭环：CI 构建成功、两个 Release 各 5 个客户端包、公库清单指向 Aurora-75/80",
+      "source": "实测",
+      "evidence": [
+        "Actions run 46032791420（Build APK success）",
+        "gh api /repos/Yieyuqwqs/Yieyu-Update/contents/update.json"
+      ]
+    },
+    {
+      "id": "device-runtime-unverified",
+      "claim": "真机运行（播放/搜索/下载/一起听的实际手感）本轮仍未验证",
+      "source": "未接上",
+      "evidence": [
+        "本机无 JDK/Android SDK/设备，只能由 CI 构建 + 用户侧安装"
+      ]
+    },
     {
       "id": "storage-three-layer-consistency",
       "claim": "单条写入/批量写入/删除三条路径同时更新 内存缓存 + C++ kv + AsyncStorage；删除后读不到旧值（解封不会失效）",
@@ -52,14 +104,6 @@
       "evidence": [
         ".github/workflows/ci.yml",
         "node tools/constitution-audit.mjs"
-      ]
-    },
-    {
-      "id": "apk-build-not-verified",
-      "claim": "APK 构建与真机播放本轮未验证（本机无 JDK/Android SDK/真机）",
-      "source": "未接上",
-      "evidence": [
-        "node tools/constitution-audit.mjs（第 6 条 N/A）"
       ]
     },
     {
