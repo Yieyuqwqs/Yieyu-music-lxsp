@@ -342,6 +342,12 @@ export interface EvaluateInput {
   banned: boolean
   /** 云端条目是不是还在人工审核（pending） */
   entryPending?: boolean
+  /**
+   * 本机令牌里有没有 QQ（落盘的一个小旗标）。
+   * 令牌是 Keystore 密文，解锁前读不出来，所以用这个旗标提前判断「必须补绑 QQ」。
+   * false / 缺省 = 老令牌（没绑 QQ）→ 停在 bind_qq。
+   */
+  tokenHasQQ?: boolean
   /** 绑定的 QQ 是否在黑名单里（换设备也要拦） */
   qqBanned?: boolean
   /** 系统时间被调回 */
@@ -377,6 +383,11 @@ export const evaluate = (input: EvaluateInput, now = Date.now()): EvaluateResult
   const entryExp = input.entry?.exp ?? null
 
   if (input.hasToken) {
+    // 旧令牌没有 QQ：先补绑，连指纹都不让按（避免「按了指纹又被踢回来」）
+    if (input.tokenHasQQ === false) {
+      const boundExp = input.cloudFresh && input.entry ? entryExp : tokenExp
+      return result('bind_qq', '旧授权还没绑定 QQ：填写 QQ 并点「绑定 QQ 后使用」，绑定后即可正常使用', boundExp, now)
+    }
     // 只有「白名单开通」的令牌才受云端撤权约束；迁移码/离线串本来就是给
     // 「云端里没有这台设备」的场景准备的，不能被云端名单一票否决（封禁走黑名单）。
     const whitelistBacked = input.token != null && input.token.via === 'whitelist'

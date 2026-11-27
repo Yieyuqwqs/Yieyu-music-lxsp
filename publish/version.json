@@ -1,7 +1,11 @@
 {
-  "version": "1.9-Aurora-68",
-  "desc": "Aurora-68 · 强制绑定 QQ（旧授权没 QQ 的就进不了主界面）\n\n· 新增状态 bind_qq：设备已授权但令牌里没有 QQ → 界面停在「必须绑定 QQ」，不许进主界面；\n· 绑定入口：填 QQ → 核对头像 → 生成申请码发管理员（管理员通过后）或直接绑定指纹；\n· 授权中心（设置里）同样会把状态显示成「必须绑定 QQ」，并提供 QQ 输入 + 绑定按钮；\n· 到期优先于强制绑定：已过期的授权先提示续期，不会让人白忙一场；\n· 回归测试补了 bind_qq 用例（旧令牌 / 到期优先级 / 文案）。\n\n版本 Aurora-68 / versionCode 73",
+  "version": "1.9-Aurora-69",
+  "desc": "Aurora-69 · 修「强制绑 QQ」卡住：先补绑，别先让人按指纹\n\n· 现象：旧授权（没绑 QQ）点「按指纹进入」→ 弹「旧授权还没绑定 QQ」，但又没有补绑入口，死循环；\n· 原因：令牌是 Keystore 密文，解锁前读不到里面有没有 QQ，状态停留在 locked，\n  直到按完指纹才在内部变成 bind_qq，于是表现成「按了也不行」；\n· 修法：绑定成功时落一个 tokenHasQQ 旗标，启动时据此**提前**判定 bind_qq，\n  直接显示「绑定 QQ 后使用」，不会再让人白按指纹；\n· 解绑/重绑都会同步这个旗标；申请码、头像核对、人工审核流程不变。\n\n版本 Aurora-69 / versionCode 74",
   "history": [
+    {
+      "version": "1.9-Aurora-68",
+      "desc": "Aurora-68 · 强制绑定 QQ（旧授权没 QQ 的就进不了主界面）\n\n· 新增状态 bind_qq：设备已授权但令牌里没有 QQ → 界面停在「必须绑定 QQ」，不许进主界面；\n· 绑定入口：填 QQ → 核对头像 → 生成申请码发管理员（管理员通过后）或直接绑定指纹；\n· 授权中心（设置里）同样会把状态显示成「必须绑定 QQ」，并提供 QQ 输入 + 绑定按钮；\n· 到期优先于强制绑定：已过期的授权先提示续期，不会让人白忙一场；\n· 回归测试补了 bind_qq 用例（旧令牌 / 到期优先级 / 文案）。\n\n版本 Aurora-68 / versionCode 73"
+    },
     {
       "version": "1.9-Aurora-67",
       "desc": "Aurora-67 · 修「生成申请码」崩溃：Hermes 没有 TextEncoder\n\n· 现象：点「生成授权申请码」弹 \"Property 'TextEncoder' doesn't exist\"（Aurora-66 的 bug）；\n· 原因：申请码用 TextEncoder/TextDecoder 把 JSON 转 hex，而 Hermes 没有这两个全局对象；\n· 修法：改成纯 JS 的 UTF-8 ↔ hex（含中文/emoji 代理对处理），并补了对照 Node Buffer 的回归；\n· 顺手把申请码的打包/解包测试扩到中文昵称 + emoji。\n\n版本 Aurora-67 / versionCode 72"
@@ -76,5 +80,5 @@
     }
   ],
   "versionCode": 67,
-  "message": "旧授权强制补绑 QQ：填 QQ、核对头像、绑定后即可继续使用；没绑 QQ 无法进入主界面。"
+  "message": "修强制绑 QQ 的卡死：现在会直接显示「绑定 QQ 后使用」，填 QQ 绑定后即可继续使用。"
 }

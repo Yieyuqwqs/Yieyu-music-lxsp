@@ -34,6 +34,7 @@ const KEY_CLOUD_CACHE = 'license.cloudCache'
 const KEY_USED_MIGRATIONS = 'license.usedMigrations'
 const KEY_BANNED = 'license.bannedEntry'
 const KEY_BANNED_QQ = 'license.bannedQq'
+const KEY_TOKEN_HAS_QQ = 'license.tokenHasQq'
 
 interface CloudSnapshot {
   whitelist: { updatedAt: number, devices: WhitelistEntry[] } | null
@@ -44,6 +45,8 @@ interface CloudSnapshot {
 let deviceCode = ''
 let entryCodeKey = ''
 let tokenExists = false
+/** 令牌里是否带 QQ（落盘旗标；令牌密文解锁前读不到） */
+let tokenHasQQ = false
 let memoryToken: AuthzToken | null = null
 let nativeOk = false
 let biometricOk = false
@@ -195,6 +198,7 @@ const applyEvaluate = async(): Promise<EvaluateResult> => {
     token: memoryToken,
     entry,
     entryPending: entry?.status === 'pending',
+    tokenHasQQ,
     cloudFresh,
     banned,
     qqBanned,
@@ -293,6 +297,7 @@ export const initLicense = async(): Promise<void> => {
   await getDeviceCode()
   await getEntryKey()
   tokenExists = await authzNative.hasToken().catch(() => false)
+  tokenHasQQ = (await getData<boolean>(KEY_TOKEN_HAS_QQ).catch(() => false)) === true
   memoryToken = null
 
   // 4. 先用缓存出状态（不等网络），后台再拉云端
@@ -386,6 +391,8 @@ const bindToken = async(exp: string | null, via: BindVia, qq: string): Promise<{
     return { ok: false, message: errText(error) }
   }
   tokenExists = true
+  tokenHasQQ = true
+  await saveData(KEY_TOKEN_HAS_QQ, true).catch(() => {})
   memoryToken = token
   await applyEvaluate()
   return { ok: true, message: messageForBind(exp) }
@@ -419,6 +426,10 @@ export const unlockWithFingerprint = async(): Promise<{ ok: boolean, message: st
     return { ok: false, message: '授权已到期，请联系管理员续期' }
   }
 
+  if (token.qqKey) {
+    tokenHasQQ = true
+    await saveData(KEY_TOKEN_HAS_QQ, true).catch(() => {})
+  }
   memoryToken = token
   // 顺手把云端变更（续期/改期）同步一下，让状态机决定要不要重新绑定
   void syncCloud()
@@ -560,6 +571,8 @@ export const getBoundQQ = (): string => memoryToken?.qqMask ?? ''
 export const clearLocalLicense = async(): Promise<void> => {
   memoryToken = null
   tokenExists = false
+  tokenHasQQ = false
+  await removeData(KEY_TOKEN_HAS_QQ).catch(() => {})
   try {
     await authzNative.clearToken()
   } catch (error) {

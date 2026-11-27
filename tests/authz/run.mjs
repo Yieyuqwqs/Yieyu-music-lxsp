@@ -322,6 +322,9 @@ t.suite('状态机', () => {
   })
   t.test('旧授权没有 QQ → bind_qq（强制补绑，不给进主界面）', () => {
     const legacy = makeToken({ qqMask: undefined, qqKey: undefined })
+    // 落盘旗标 tokenHasQQ=false：连指纹都不让按，直接停在补绑页
+    t.eq(statusOf({ hasToken: true, tokenHasQQ: false }), 'bind_qq')
+    t.eq(statusOf({ hasToken: true, token: legacy, tokenHasQQ: false }), 'bind_qq')
     t.eq(statusOf({ hasToken: true, token: legacy }), 'bind_qq')
     t.eq(statusOf({ hasToken: true, token: legacy, cloudFresh: true, entry: { k: TOKEN_KEY, exp: null } }), 'bind_qq')
     t.eq(statusText('bind_qq'), '必须绑定 QQ')
