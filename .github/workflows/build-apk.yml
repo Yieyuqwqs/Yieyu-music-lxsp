@@ -21,6 +21,11 @@ jobs:
       - name: Setup Env
         uses: ./.github/actions/setup
 
+      - name: Inject authz secret (from Secret)
+        shell: bash
+        env:
+          AUTHZ_SECRET_B64: ${{ secrets.AUTHZ_SECRET_B64 }}
+        run: node scripts/write-authz-secret.js --require
       - name: Prepare fixed signing keystore
         shell: bash
         env:
@@ -212,6 +217,11 @@ jobs:
           LICENSE_KEYPAIR_B64: ${{ secrets.LICENSE_KEYPAIR_B64 }}
         run: node scripts/write-admin-key.js
 
+      - name: Inject authz secret (from Secret)
+        shell: bash
+        env:
+          AUTHZ_SECRET_B64: ${{ secrets.AUTHZ_SECRET_B64 }}
+        run: node scripts/write-authz-secret.js --require
       - name: Prepare fixed signing keystore
         shell: bash
         env:

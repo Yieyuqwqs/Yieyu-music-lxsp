@@ -320,7 +320,7 @@ const VersionModal = ({ componentId }: { componentId: string }) => {
           ? (
               <View style={styles.forceBar}>
                 <Text style={styles.forceText}>
-                  此窗口无法关闭、也不支持跳过：请先下载并覆盖安装最新版，更新后卡密与设备码不会变化。
+                  此窗口无法关闭、也不支持跳过：请先下载并覆盖安装最新版。设备码不会变，但旧卡密全部作废，需要在授权页重新绑定指纹。
                 </Text>
               </View>
             )

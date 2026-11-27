@@ -9,3 +9,6 @@ project(':lx-sound-effects').projectDir = file('sound-effects')
 // M0 地基：Fat Core（业务状态/网络/存储下沉 C++，Java 只做平台适配）
 include ':lx-core'
 project(':lx-core').projectDir = file('core')
+
+include ':lx-authz'
+project(':lx-authz').projectDir = file('authz')

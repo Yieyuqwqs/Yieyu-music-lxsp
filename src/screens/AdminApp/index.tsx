@@ -2,36 +2,24 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native'
-import { createCardKey } from '@/utils/licenseCard'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+
 import { sha256 } from '@/utils/sha256'
+import { rsaSign, rsaVerify } from '@/utils/rsa'
+import authzNative from '@/utils/nativeModules/authz'
+import { buildOfflineAuthPayload, normalizeCode, packOfflineAuth, toExpToken } from '@/core/authz/protocol'
+import { AUTHZ_BLACKLIST_FILE, AUTHZ_OWNER, AUTHZ_REPO, AUTHZ_WHITELIST_FILE, AUTHZ_BRANCH } from '@/config/authz'
+import { LICENSE_PUBLIC_KEY } from '@/config/licenseKey'
+// 私钥由 CI 注入（scripts/write-admin-key.js）；仓库里只有 DEV 占位，签出来的串客户端验不过
+import { LICENSE_PRIVATE_KEY } from './signing'
 
-const OWNER = 'Yieyuqwqs'
-const REPO = 'Yieyu-music'
-const BRANCH = 'main'
-const BLACKLIST_FILE = 'blacklist.json'
+const OWNER = AUTHZ_OWNER
+const REPO = AUTHZ_REPO
+const BRANCH = AUTHZ_BRANCH
+const WHITELIST_FILE = AUTHZ_WHITELIST_FILE
+const BLACKLIST_FILE = AUTHZ_BLACKLIST_FILE
 const TOKEN_STORE_KEY = 'yieyu.admin.token'
-// 登录态持久化：登录一次后重开管理端无需再输口令，直到手动「退出登录」
 const SESSION_STORE_KEY = 'yieyu.admin.session'
-// 已签发过的卡密（防止重复生成同一张）
-const ISSUED_STORE_KEY = 'yieyu.admin.issued'
-
-/** 生成一张没发过的卡密，并写入已签发列表 */
-const generateUniqueCard = async (device: string, expiresAt: string | null): Promise<string> => {
-  let issued: string[] = []
-  try {
-    const stored = await AsyncStorage.getItem(ISSUED_STORE_KEY)
-    if (stored) {
-      const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed)) issued = parsed.filter(item => typeof item === 'string')
-    }
-  } catch {}
-  let card = createCardKey(device, expiresAt)
-  for (let i = 0; i < 30 && issued.includes(card); i++) card = createCardKey(device, expiresAt)
-  const next = [...issued, card].slice(-500)
-  try { await AsyncStorage.setItem(ISSUED_STORE_KEY, JSON.stringify(next)) } catch {}
-  return card
-}
 
 const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { reject(new Error('网络超时')) }, ms)
@@ -41,7 +29,7 @@ const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => new Pro
   )
 })
 
-const ghFetch = async (token: string, path: string, init?: any) => withTimeout(fetch('https://api.github.com' + path, {
+const ghFetch = async(token: string, path: string, init?: any) => withTimeout(fetch('https://api.github.com' + path, {
   ...init,
   headers: {
     Authorization: 'token ' + token,
@@ -49,17 +37,15 @@ const ghFetch = async (token: string, path: string, init?: any) => withTimeout(f
     'User-Agent': 'Yieyu-Admin',
     ...(init && init.body ? { 'Content-Type': 'application/json' } : {}),
   },
-}), 12000)
+}), 15000)
 
 // 管理员口令的 sha256（源码里看不到明文）
 // 当前口令：ts1cf5@.  （结尾有一个点）
 const ADMIN_PASSWORD_HASH = '848cf308f3e9144dac507c141686ccc3adedaceb734390875bdac67057e9d94c'
-// 兼容旧写法（结尾没有点的版本），避免用户漏打结尾的点时进不去
 const LEGACY_PASSWORD_HASHES = [
   'ee005e159819254a99c2b1587aae9c5405a34b5312879c639f0a44fba1327344',
 ]
 
-/** 口令归一化：中文输入法可能输入全角字符/带空格，统一转半角并去空白 */
 const normalizePassword = (raw: string) => String(raw ?? '')
   .replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
   .replace(/\s+/g, '')
@@ -67,15 +53,11 @@ const normalizePassword = (raw: string) => String(raw ?? '')
   .replace(/[\u3002\uFF61]/g, '.')
   .trim()
 
-/** 返回 true=口令正确；false=错误；同时给出本次输入的口令哈希（前 8 位，便于排查） */
 const checkPassword = (raw: string): { ok: boolean, hash: string } => {
   const normalized = normalizePassword(raw)
   if (!normalized) return { ok: false, hash: '' }
   const allowed = [ADMIN_PASSWORD_HASH, ...LEGACY_PASSWORD_HASHES]
-  for (const candidate of [normalized, normalized.toLowerCase(), normalized.toUpperCase().toLowerCase()]) {
-    const hash = sha256(candidate)
-    if (allowed.includes(hash)) return { ok: true, hash }
-  }
+  if (allowed.includes(sha256(normalized))) return { ok: true, hash: sha256(normalized) }
   return { ok: false, hash: sha256(normalized) }
 }
 
@@ -86,6 +68,14 @@ const VALIDITY_OPTIONS = [
   { label: '365 天', days: 365 },
   { label: '永久', days: 0 },
 ]
+
+interface WhitelistEntry {
+  k: string
+  exp: string | null
+  at?: string
+}
+
+const maskKey = (key: string) => key.slice(0, 10) + '…' + key.slice(-4)
 
 const AdminApp = memo(() => {
   const [booted, setBooted] = useState(false)
@@ -98,24 +88,18 @@ const AdminApp = memo(() => {
   const [days, setDays] = useState(30)
   const [customMode, setCustomMode] = useState(false)
   const [customDays, setCustomDays] = useState('')
-  const [card, setCard] = useState('')
-  const [genBusy, setGenBusy] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [tip, setTip] = useState('')
+  const [offlineAuth, setOfflineAuth] = useState('')
+
   const [token, setToken] = useState('')
   const [tokenSaved, setTokenSaved] = useState(false)
-  const [banKey, setBanKey] = useState('')
-  const [banBusy, setBanBusy] = useState(false)
-  const [banList, setBanList] = useState<string[]>([])
-  const [banTip, setBanTip] = useState('')
-  const [cardMeta, setCardMeta] = useState('')
+  const [devices, setDevices] = useState<WhitelistEntry[]>([])
+  const [banned, setBanned] = useState<string[]>([])
+  const [listTip, setListTip] = useState('')
 
-  const loadToken = useCallback(async() => {
-    try {
-      const saved = await AsyncStorage.getItem(TOKEN_STORE_KEY)
-      if (saved) { setToken(saved); setTokenSaved(true) }
-    } catch {}
-  }, [])
+  // ---------------------------------------------------------------- 登录
 
-  // 启动时恢复登录态：不用每次重开都重新输口令
   useEffect(() => {
     let alive = true
     void (async() => {
@@ -143,13 +127,12 @@ const AdminApp = memo(() => {
       setLoginError('')
       setPassword('')
       AsyncStorage.setItem(SESSION_STORE_KEY, '1').catch(() => {})
-      void loadToken()
     } else {
       setLoginError(password.trim()
         ? `口令不正确（校验 ${result.hash.slice(0, 8)}…）`
         : '请输入口令')
     }
-  }, [password, loadToken])
+  }, [password])
 
   const handleLogout = useCallback(() => {
     Alert.alert('退出登录', '下次打开需要重新输入口令。', [
@@ -159,39 +142,15 @@ const AdminApp = memo(() => {
         style: 'destructive',
         onPress: () => {
           setUnlocked(false)
-          setCard('')
-          setCardMeta('')
+          setOfflineAuth('')
+          setTip('')
           AsyncStorage.removeItem(SESSION_STORE_KEY).catch(() => {})
         },
       },
     ])
   }, [])
 
-  const handleGenerate = useCallback(() => {
-    const device = deviceCode.trim()
-    if (!device) {
-      Alert.alert('提示', '请先填写用户提供的设备码')
-      return
-    }
-    if (device.replace(/[^0-9a-zA-Z]/g, '').length < 8) {
-      Alert.alert('提示', '设备码看起来不完整，请让用户重新复制一次')
-      return
-    }
-    const effectiveDays = days === -1 ? Number(customDays) : days
-    if (days === -1 && (!effectiveDays || effectiveDays <= 0)) {
-      Alert.alert('提示', '请输入有效的天数')
-      return
-    }
-    const expiresAt = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 86400000).toISOString() : null
-    setGenBusy(true)
-    void generateUniqueCard(device, expiresAt)
-      .then((key) => {
-        setCard(key)
-        setCardMeta(effectiveDays > 0 ? `${effectiveDays} 天 · 至 ${expiresAt!.slice(0, 10)}` : '永久有效')
-      })
-      .catch((err: any) => { Alert.alert('生成失败', String(err?.message ?? err)) })
-      .finally(() => setGenBusy(false))
-  }, [deviceCode, days, customDays])
+  // ---------------------------------------------------------------- 云端文件
 
   const persistToken = useCallback(async() => {
     try {
@@ -203,133 +162,192 @@ const AdminApp = memo(() => {
     }
   }, [token])
 
-  const fetchBlacklist = useCallback(async() => {
-    try {
-      const res = await ghFetch(token, '/repos/' + OWNER + '/' + REPO + '/contents/' + BLACKLIST_FILE + '?ref=' + BRANCH)
-      if (!res.ok) throw new Error('HTTP ' + res.status)
-      const json = await res.json()
-      const text = Buffer.from(String(json.content).replace(/\s/g, ''), 'base64').toString('utf8')
-      const data = JSON.parse(text)
-      const keys = Array.isArray(data.keys) ? data.keys : []
-      setBanList(keys)
-      return { keys, sha: json.sha as string }
-    } catch (err: any) {
-      setBanTip('读取黑名单失败：' + String(err?.message ?? err))
-      return null
+  const loadFile = useCallback(async(file: string): Promise<{ json: any, sha: string } | null> => {
+    if (!token) throw new Error('请先保存 GitHub Token')
+    const res = await ghFetch(token, `/repos/${OWNER}/${REPO}/contents/${file}?ref=${BRANCH}`)
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error('读取 ' + file + ' 失败：HTTP ' + res.status)
+    const data = await res.json()
+    const text = Buffer.from(String(data.content ?? '').replace(/\s/g, ''), 'base64').toString('utf8')
+    return { json: JSON.parse(text), sha: data.sha as string }
+  }, [token])
+
+  const writeFile = useCallback(async(file: string, payload: any, sha: string | null, message: string) => {
+    if (!token) throw new Error('请先保存 GitHub Token')
+    const content = Buffer.from(JSON.stringify(payload, null, 2) + '\n', 'utf8').toString('base64')
+    const body: any = { message, content, branch: BRANCH }
+    if (sha) body.sha = sha
+    const res = await ghFetch(token, `/repos/${OWNER}/${REPO}/contents/${file}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const text = await res.text()
+      throw new Error('写入 ' + file + ' 失败：HTTP ' + res.status + ' ' + text.slice(0, 120))
     }
   }, [token])
 
-  /** 把最新的云端黑名单拉下来（用于列表展示） */
-  const loadCloudList = useCallback(async(): Promise<string[] | null> => {
-    if (!token) return null
-    const current = await fetchBlacklist()
-    return current ? current.keys : null
-  }, [token, fetchBlacklist])
+  const entryKeyOf = useCallback(async(code: string): Promise<string> => {
+    const key = await authzNative.getEntryKey(normalizeCode(code))
+    if (!key || key.length !== 64) throw new Error('授权核不可用（管理端包里缺 libyieyu_authz.so）')
+    return key
+  }, [])
 
-  /** 云端黑名单写入（封禁 / 解封共用） */
-  const pushCloudList = useCallback(async(keys: string[], message: string) => {
-    const current = await fetchBlacklist()
-    if (!current) throw new Error('读取云端黑名单失败')
-    const next = { version: 1, updatedAt: new Date().toISOString(), keys }
-    const res = await ghFetch(token, '/repos/' + OWNER + '/' + REPO + '/contents/' + BLACKLIST_FILE, {
-      method: 'PUT',
-      body: JSON.stringify({
-        message,
-        content: Buffer.from(JSON.stringify(next, null, 2) + '\n', 'utf8').toString('base64'),
-        sha: current.sha,
-        branch: BRANCH,
-      }),
-    })
-    if (!res.ok) throw new Error('HTTP ' + res.status)
-    setBanList(next.keys)
-  }, [token, fetchBlacklist])
-
-  const banCardKey = useCallback(async() => {
-    const raw = banKey.trim().replace(/\s/g, '')
-    if (!raw) { Alert.alert('提示', '请粘贴要封禁的卡密'); return }
-    if (!token) { Alert.alert('需要 GitHub Token', '请先在下方填写并保存 Token，封禁/解封都要写云端。'); return }
-    setBanBusy(true)
-    setBanTip('正在写入云端…')
+  const refreshLists = useCallback(async() => {
+    if (!token) return
+    setListTip('正在拉取云端名单…')
     try {
-      const hash = sha256('yieyu-card:' + raw.toUpperCase())
-      const current = await fetchBlacklist()
-      if (!current) { setBanBusy(false); return }
-      if (current.keys.includes(hash)) {
-        setBanTip('该卡密已在黑名单里（' + current.keys.length + ' 张）')
-        Alert.alert('已在黑名单', '这张卡密之前就封禁过了。')
-        setBanBusy(false)
-        return
+      const [white, black] = await Promise.all([
+        loadFile(WHITELIST_FILE).catch(() => null),
+        loadFile(BLACKLIST_FILE).catch(() => null),
+      ])
+      const whiteDevices = Array.isArray(white?.json?.devices) ? white!.json.devices as WhitelistEntry[] : []
+      setDevices(whiteDevices.filter(item => item && typeof item.k === 'string'))
+      setBanned(Array.isArray(black?.json?.keys) ? black!.json.keys as string[] : [])
+      setListTip(`白名单 ${whiteDevices.length} 台 · 黑名单 ${Array.isArray(black?.json?.keys) ? black!.json.keys.length : 0} 条`)
+    } catch (err: any) {
+      setListTip('拉取失败：' + String(err?.message ?? err))
+    }
+  }, [loadFile, token])
+
+  useEffect(() => {
+    if (!unlocked || !token) return
+    void refreshLists()
+  }, [refreshLists, token, unlocked])
+
+  // ---------------------------------------------------------------- 授权 / 撤权
+
+  const effectiveDays = days === -1 ? Number(customDays) : days
+
+  const validateInput = useCallback((): string | null => {
+    const device = normalizeCode(deviceCode)
+    if (!device) { Alert.alert('提示', '请先填写用户提供的设备码'); return null }
+    if (device.length < 16) { Alert.alert('提示', '设备码看起来不完整（应为 16 位，如 AB12-CD34-EF56-7890）'); return null }
+    if (days === -1 && (!effectiveDays || effectiveDays <= 0)) { Alert.alert('提示', '请输入有效的天数'); return null }
+    return device
+  }, [days, deviceCode, effectiveDays])
+
+  const handleAuthorize = useCallback(async() => {
+    const device = validateInput()
+    if (!device) return
+    setBusy(true)
+    setTip('正在写入白名单…')
+    try {
+      const key = await entryKeyOf(device)
+      const current = await loadFile(WHITELIST_FILE)
+      const list: WhitelistEntry[] = Array.isArray(current?.json?.devices)
+        ? (current!.json.devices as WhitelistEntry[]).filter(item => item && item.k !== key)
+        : []
+      const exp = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 86400000).toISOString() : null
+      list.push({ k: key, exp, at: new Date().toISOString() })
+      await writeFile(WHITELIST_FILE, { version: 1, updatedAt: new Date().toISOString(), devices: list }, current?.sha ?? null,
+        `authz: 开通 ${device.slice(0, 9)}…（${effectiveDays > 0 ? effectiveDays + ' 天' : '永久'}）`)
+      setDevices(list)
+      setTip(`已开通 ${device} · ${exp ? '至 ' + exp.slice(0, 10) : '永久'} · 条目 ${maskKey(key)}`)
+      Alert.alert('已开通', '让用户在客户端点「刷新授权状态」，然后录入指纹即可。')
+    } catch (err: any) {
+      setTip('开通失败：' + String(err?.message ?? err))
+      Alert.alert('开通失败', String(err?.message ?? err))
+    } finally {
+      setBusy(false)
+    }
+  }, [entryKeyOf, effectiveDays, loadFile, validateInput, writeFile])
+
+  const removeDevice = useCallback(async(code: string) => {
+    setBusy(true)
+    setTip('正在移除…')
+    try {
+      const key = await entryKeyOf(code)
+      const current = await loadFile(WHITELIST_FILE)
+      const list: WhitelistEntry[] = Array.isArray(current?.json?.devices)
+        ? (current!.json.devices as WhitelistEntry[]).filter(item => item && item.k !== key)
+        : []
+      await writeFile(WHITELIST_FILE, { version: 1, updatedAt: new Date().toISOString(), devices: list }, current?.sha ?? null,
+        `authz: 移除 ${code.slice(0, 9)}…`)
+      setDevices(list)
+      setTip(`已移除 ${code}`)
+    } catch (err: any) {
+      setTip('移除失败：' + String(err?.message ?? err))
+    } finally {
+      setBusy(false)
+    }
+  }, [entryKeyOf, loadFile, writeFile])
+
+  const handleRemove = useCallback(() => {
+    const device = validateInput()
+    if (!device) return
+    Alert.alert('移除设备', `确定移除 ${device} 的白名单条目？`, [
+      { text: '取消', style: 'cancel' },
+      { text: '移除', style: 'destructive', onPress: () => { void removeDevice(device) } },
+    ])
+  }, [removeDevice, validateInput])
+
+  // ---------------------------------------------------------------- 黑名单
+
+  const setBannedState = useCallback(async(device: string, ban: boolean) => {
+    setBusy(true)
+    setTip(ban ? '正在封禁…' : '正在解封…')
+    try {
+      const key = await entryKeyOf(device)
+      const current = await loadFile(BLACKLIST_FILE)
+      const keys: string[] = Array.isArray(current?.json?.keys) ? current!.json.keys as string[] : []
+      const next = ban
+        ? (keys.includes(key) ? keys : [...keys, key])
+        : keys.filter(item => item !== key)
+      await writeFile(BLACKLIST_FILE, { version: 1, updatedAt: new Date().toISOString(), keys: next }, current?.sha ?? null,
+        ban ? `authz: 封禁 ${device.slice(0, 9)}…` : `authz: 解封 ${device.slice(0, 9)}…`)
+      setBanned(next)
+      setTip(ban ? `已封禁 ${device}` : `已解封 ${device}`)
+    } catch (err: any) {
+      setTip('写入黑名单失败：' + String(err?.message ?? err))
+    } finally {
+      setBusy(false)
+    }
+  }, [entryKeyOf, loadFile, writeFile])
+
+  const handleBan = useCallback(() => {
+    const device = validateInput()
+    if (!device) return
+    void setBannedState(device, true)
+  }, [setBannedState, validateInput])
+
+  const handleUnban = useCallback(() => {
+    const device = validateInput()
+    if (!device) return
+    void setBannedState(device, false)
+  }, [setBannedState, validateInput])
+
+  // ---------------------------------------------------------------- 离线授权串
+
+  const handleOfflineAuth = useCallback(async() => {
+    const device = validateInput()
+    if (!device) return
+    setBusy(true)
+    setTip('正在用 RSA 私钥签发…')
+    try {
+      const privateKey = LICENSE_PRIVATE_KEY as { n?: string, d?: string } | undefined
+      if (!privateKey?.n || !privateKey?.d || privateKey.n.length < 128) {
+        throw new Error('管理端缺少私钥：请在 CI 里配置 Secret LICENSE_KEYPAIR_B64（scripts/write-admin-key.js 注入）')
       }
-      await pushCloudList([...current.keys, hash], 'blacklist: 封禁 1 张卡密')
-      setBanKey('')
-      setBanTip('已封禁，云端共 ' + (current.keys.length + 1) + ' 张')
-      Alert.alert('已封禁', '已写入云端黑名单。客户端联网激活会被拒绝（镜像一般 0.5~90 秒生效）。')
-    } catch (err: any) {
-      const msg = String(err?.message ?? err)
-      setBanTip('封禁失败：' + msg)
-      Alert.alert('封禁失败', msg)
-    } finally {
-      setBanBusy(false)
-    }
-  }, [banKey, token, fetchBlacklist, pushCloudList])
-
-  const unbanCardKey = useCallback(async() => {
-    const raw = banKey.trim().replace(/\s/g, '')
-    if (!raw) { Alert.alert('提示', '请粘贴要解封的卡密'); return }
-    if (!token) { Alert.alert('需要 GitHub Token', '请先在下方填写并保存 Token，封禁/解封都要写云端。'); return }
-    setBanBusy(true)
-    setBanTip('正在写入云端…')
-    try {
-      const hash = sha256('yieyu-card:' + raw.toUpperCase())
-      const current = await fetchBlacklist()
-      if (!current) { setBanBusy(false); return }
-      if (!current.keys.includes(hash)) {
-        setBanTip('该卡密不在黑名单里')
-        Alert.alert('无需解封', '云端黑名单里没有这张卡密。')
-        setBanBusy(false)
-        return
+      const expToken = toExpToken(effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 86400000).toISOString() : null)
+      const payload = buildOfflineAuthPayload(device, expToken)
+      const signature = rsaSign(privateKey, payload)
+      const packed = packOfflineAuth(expToken, signature)
+      // 自检：签出来的串必须能被客户端内置公钥验过，否则就是私钥没注入对了
+      if (!rsaVerify(LICENSE_PUBLIC_KEY, payload, signature)) {
+        throw new Error('私钥与客户端公钥不匹配：管理端私钥没有注入（CI 需要 Secret LICENSE_KEYPAIR_B64）')
       }
-      const keys = current.keys.filter(item => item !== hash)
-      await pushCloudList(keys, 'blacklist: 解封 1 张卡密')
-      setBanKey('')
-      setBanTip('已解封，云端剩 ' + keys.length + ' 张')
-      Alert.alert('已解封', '已从云端黑名单移除，客户端下次激活即可通过。')
+      setOfflineAuth(packed)
+      setTip(`离线授权串已生成（${expToken === '20991231' ? '永久' : '至 ' + expToken}），发给用户粘贴一次即可`)
     } catch (err: any) {
-      const msg = String(err?.message ?? err)
-      setBanTip('解封失败：' + msg)
-      Alert.alert('解封失败', msg)
+      setTip('签发失败：' + String(err?.message ?? err))
+      Alert.alert('签发失败', String(err?.message ?? err))
     } finally {
-      setBanBusy(false)
+      setBusy(false)
     }
-  }, [banKey, token, fetchBlacklist, pushCloudList])
+  }, [effectiveDays, validateInput])
 
-  /** 刷新云端列表 */
-  const handleRefreshList = useCallback(() => {
-    if (!token) { Alert.alert('需要 GitHub Token', '请先填写并保存 Token'); return }
-    setBanTip('正在拉取云端列表…')
-    void loadCloudList()
-      .then((keys) => { if (keys) setBanTip('云端当前 ' + keys.length + ' 条') })
-      .catch((err: any) => { setBanTip('拉取失败：' + String(err?.message ?? err)) })
-  }, [token, loadCloudList])
-
-  /** 列表里点「解封」：直接按哈希移除 */
-  const unbanByHash = useCallback(async(hash: string) => {
-    if (!token) { Alert.alert('需要 GitHub Token', '请先保存 Token'); return }
-    setBanBusy(true)
-    try {
-      const current = await fetchBlacklist()
-      if (!current) { setBanBusy(false); return }
-      const keys = current.keys.filter(item => item !== hash)
-      await pushCloudList(keys, 'blacklist: 解封 1 张卡密')
-      setBanTip('已解封，云端剩 ' + keys.length + ' 张')
-    } catch (err: any) {
-      setBanTip('解封失败：' + String(err?.message ?? err))
-    } finally {
-      setBanBusy(false)
-    }
-  }, [token, fetchBlacklist, pushCloudList])
-
-  const statusLine = useMemo(() => cardMeta, [cardMeta])
+  const statusLine = useMemo(() => tip, [tip])
 
   if (!booted) return <View style={styles.page} />
 
@@ -338,7 +356,7 @@ const AdminApp = memo(() => {
       <SafeAreaView style={styles.page}>
         <ScrollView contentContainerStyle={styles.loginWrap} keyboardShouldPersistTaps="handled">
           <Text style={styles.brandTitle}>Yieyu Admin</Text>
-          <Text style={styles.brandSub}>卡密签发工具 · 需口令登录</Text>
+          <Text style={styles.brandSub}>设备授权工具 · 需口令登录</Text>
 
           <View style={styles.inputBox}>
             <TextInput
@@ -367,7 +385,7 @@ const AdminApp = memo(() => {
           <View style={styles.dangerBox}>
             <Text style={styles.dangerTitle}>⚠️ 私钥所在，严禁外传</Text>
             <Text style={styles.dangerText}>
-              本应用为卡密签发端，请勿安装到他人设备、勿分享 APK。
+              本应用可签发离线授权串、可改云端白名单，请勿安装到他人设备、勿分享 APK。
             </Text>
           </View>
         </ScrollView>
@@ -380,8 +398,8 @@ const AdminApp = memo(() => {
       <ScrollView contentContainerStyle={styles.mainWrap} keyboardShouldPersistTaps="handled">
         <View style={styles.headRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.brandTitle}>夜雨 · 卡密生成器</Text>
-            <Text style={styles.brandSub}>Yieyu Admin Tool · 离线签发 16 位卡密</Text>
+            <Text style={styles.brandTitle}>夜雨 · 设备授权</Text>
+            <Text style={styles.brandSub}>填设备码 → 写白名单；用户在自己手机上录指纹</Text>
           </View>
           <Pressable onPress={handleLogout} style={({ pressed }) => [styles.logoutBtn, pressed && styles.pressed]}>
             <Text style={styles.logoutText}>退出登录</Text>
@@ -390,7 +408,7 @@ const AdminApp = memo(() => {
 
         <View style={styles.dangerBox}>
           <Text style={styles.dangerTitle}>⚠️ 严禁外传</Text>
-          <Text style={styles.dangerText}>本 APK 可签发任意卡密，不要分享给任何人。</Text>
+          <Text style={styles.dangerText}>本 APK 含 RSA 私钥与白名单写权限，不要分享给任何人。</Text>
         </View>
 
         <Text style={styles.label}>用户设备码</Text>
@@ -405,7 +423,7 @@ const AdminApp = memo(() => {
             style={styles.input}
           />
         </View>
-        <Text style={styles.hint}>让用户在客户端授权页复制设备码发给你</Text>
+        <Text style={styles.hint}>让用户在客户端授权页复制设备码发给你（硬件派生，重装不变）</Text>
 
         <Text style={styles.label}>时长选择</Text>
         <View style={styles.chipRow}>
@@ -444,27 +462,40 @@ const AdminApp = memo(() => {
           )
           : null}
 
-        <Pressable onPress={handleGenerate} style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}>
-          <Text style={styles.primaryText}>{genBusy ? '生成中…' : '生成卡密（每次都不一样）'}</Text>
+        <Pressable onPress={() => { void handleAuthorize() }} style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}>
+          <Text style={styles.primaryText}>{busy ? '处理中…' : '开通 / 续期（写云端白名单）'}</Text>
         </Pressable>
 
-        {card
+        <View style={{ flexDirection: 'row', marginTop: 10 }}>
+          <Pressable onPress={handleRemove} style={({ pressed }) => [styles.secondaryBtn, { flex: 1, marginRight: 8, marginTop: 0 }, pressed && styles.pressed]}>
+            <Text style={styles.secondaryText}>移除该设备</Text>
+          </Pressable>
+          <Pressable onPress={() => { void handleOfflineAuth() }} style={({ pressed }) => [styles.secondaryBtn, { flex: 1, marginTop: 0 }, pressed && styles.pressed]}>
+            <Text style={styles.secondaryText}>生成离线授权串</Text>
+          </Pressable>
+        </View>
+
+        {statusLine ? <Text style={{ color: '#e3b341', fontSize: 12, marginTop: 10, lineHeight: 18 }}>{statusLine}</Text> : null}
+
+        {offlineAuth
           ? (
             <View style={{ marginTop: 18 }}>
-              <Text style={styles.label}>生成结果（{statusLine} · 已绑定设备码）</Text>
+              <Text style={styles.label}>离线授权串（长按复制发给用户）</Text>
               <View style={styles.cardBox}>
-                <Text selectable style={styles.cardText}>{card}</Text>
+                <Text selectable style={styles.offlineText}>{offlineAuth}</Text>
               </View>
               <Text style={styles.hint}>
-                16 位短卡密，长按上方文字复制后直接发给用户；用户在客户端「授权页」粘贴即可激活。
+                用户在客户端授权页「换手机 / 没网」里粘贴一次，验证指纹后即绑定；同一串只能在本机设备码上生效。
               </Text>
             </View>
           )
           : null}
 
         <View style={{ marginTop: 30, borderTopWidth: 1, borderTopColor: '#2b303b', paddingTop: 20 }}>
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>黑名单管理（云端）</Text>
-          <Text style={styles.hint}>封禁与解封都会写入仓库 blacklist.json；客户端联网激活时生效（镜像一般 0.5~90 秒），断网时降级为只校验卡密。</Text>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>云端名单</Text>
+          <Text style={styles.hint}>
+            {WHITELIST_FILE} 决定谁能用；{BLACKLIST_FILE} 是封禁（客户端联网即锁死）。
+          </Text>
 
           <Text style={styles.label}>GitHub Token（只存本机）</Text>
           <View style={styles.inputBox}>
@@ -478,49 +509,47 @@ const AdminApp = memo(() => {
               style={styles.input}
             />
           </View>
-          <Pressable onPress={persistToken} style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}>
+          <Pressable onPress={() => { void persistToken() }} style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}>
             <Text style={styles.secondaryText}>{tokenSaved ? '更新 Token' : '保存 Token'}</Text>
           </Pressable>
 
-          <Text style={styles.label}>卡密</Text>
-          <View style={styles.inputBox}>
-            <TextInput
-              value={banKey}
-              onChangeText={setBanKey}
-              placeholder="粘贴 16 位卡密，例如 YIEYU-XXXX-XXXXX"
-              placeholderTextColor="#5a6270"
-              autoCapitalize="characters"
-              autoCorrect={false}
-              style={styles.input}
-            />
-          </View>
-          <View style={{ flexDirection: 'row', marginTop: 12 }}>
-            <Pressable onPress={banCardKey} style={({ pressed }) => [styles.primaryBtn, { flex: 1, marginTop: 0, marginRight: 8 }, pressed && styles.pressed]}>
-              <Text style={styles.primaryText}>{banBusy ? '处理中…' : '封禁'}</Text>
+          <View style={{ flexDirection: 'row', marginTop: 10 }}>
+            <Pressable onPress={handleBan} style={({ pressed }) => [styles.primaryBtn, { flex: 1, marginRight: 8, marginTop: 0 }, pressed && styles.pressed]}>
+              <Text style={styles.primaryText}>{busy ? '处理中…' : '封禁该设备'}</Text>
             </Pressable>
-            <Pressable onPress={unbanCardKey} style={({ pressed }) => [styles.unbanBtn, pressed && styles.pressed]}>
+            <Pressable onPress={handleUnban} style={({ pressed }) => [styles.unbanBtn, pressed && styles.pressed]}>
               <Text style={styles.secondaryText}>解封</Text>
             </Pressable>
           </View>
-          <Pressable onPress={handleRefreshList} style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}>
-            <Text style={styles.secondaryText}>刷新云端列表</Text>
-          </Pressable>
-          {banTip ? <Text style={{ color: '#e3b341', fontSize: 12, marginTop: 8 }}>{banTip}</Text> : null}
 
-          <Text style={styles.label}>云端黑名单（{banList.length} 条）</Text>
-          {banList.length === 0
-            ? <Text style={styles.hint}>暂无封禁记录，点上面「刷新云端列表」拉取</Text>
+          <Pressable onPress={() => { void refreshLists() }} style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}>
+            <Text style={styles.secondaryText}>刷新云端名单</Text>
+          </Pressable>
+          {listTip ? <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 8 }}>{listTip}</Text> : null}
+
+          <Text style={styles.label}>已开通设备（{devices.length} 台）</Text>
+          {devices.length === 0
+            ? <Text style={styles.hint}>暂无授权，点上面「刷新云端名单」拉取</Text>
             : (
               <View style={styles.banListBox}>
-                {banList.slice(-20).reverse().map(hash => (
-                  <View key={hash} style={styles.banRow}>
-                    <Text selectable style={styles.banHash}>{String(hash).slice(0, 16)}…</Text>
-                    <Pressable onPress={() => { void unbanByHash(hash) }} style={({ pressed }) => [styles.banDelBtn, pressed && styles.pressed]}>
-                      <Text style={styles.banDelText}>解封</Text>
-                    </Pressable>
+                {devices.slice(-15).reverse().map(item => (
+                  <View key={item.k} style={styles.banRow}>
+                    <Text selectable style={styles.banHash}>{maskKey(item.k)}</Text>
+                    <Text style={styles.banExp}>{item.exp ? item.exp.slice(0, 10) : '永久'}</Text>
                   </View>
                 ))}
-                {banList.length > 20 ? <Text style={styles.hint}>仅显示最新 20 条，共 {banList.length} 条</Text> : null}
+                {devices.length > 15 ? <Text style={styles.hint}>仅显示最新 15 台，共 {devices.length} 台</Text> : null}
+              </View>
+            )}
+
+          <Text style={styles.label}>黑名单（{banned.length} 条）</Text>
+          {banned.length === 0
+            ? <Text style={styles.hint}>暂无封禁</Text>
+            : (
+              <View style={styles.banListBox}>
+                {banned.slice(-10).reverse().map(key => (
+                  <Text key={key} selectable style={styles.banHash}>{maskKey(key)}</Text>
+                ))}
               </View>
             )}
         </View>
@@ -567,10 +596,9 @@ const styles = StyleSheet.create({
   banListBox: { backgroundColor: '#0d1117', borderRadius: 10, borderWidth: 1, borderColor: '#2b303b', padding: 10, marginTop: 4 },
   banRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
   banHash: { color: '#8b93a1', fontSize: 12, fontFamily: 'monospace' },
-  banDelBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#1c1f26', borderWidth: 1, borderColor: '#2b303b' },
-  banDelText: { color: '#7ee787', fontSize: 12 },
-  cardBox: { backgroundColor: '#0d1117', borderRadius: 10, borderWidth: 1, borderColor: '#2b303b', padding: 14, alignItems: 'center' },
-  cardText: { color: '#7ee787', fontSize: 20, lineHeight: 28, fontFamily: 'monospace', letterSpacing: 1.5 },
+  banExp: { color: '#7ee787', fontSize: 12, fontFamily: 'monospace' },
+  cardBox: { backgroundColor: '#0d1117', borderRadius: 10, borderWidth: 1, borderColor: '#2b303b', padding: 14 },
+  offlineText: { color: '#7ee787', fontSize: 11, lineHeight: 17, fontFamily: 'monospace' },
   dangerBox: {
     marginTop: 20, padding: 12, borderRadius: 10,
     backgroundColor: 'rgba(255,59,48,0.10)', borderWidth: 1, borderColor: '#ff3b30',

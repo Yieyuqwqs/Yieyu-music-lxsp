@@ -1,7 +1,7 @@
 {
   "name": "Yieyu-music-mobile",
-  "version": "1.9-Aurora-62",
-  "versionCode": 67,
+  "version": "1.9-Aurora-63",
+  "versionCode": 68,
   "private": true,
   "scripts": {
     "dev": "react-native run-android --active-arch-only",
@@ -22,7 +22,8 @@
     "clear:full": "git clean -fdx -e android/keystore.properties -e android/app/*.keystore",
     "build:theme": "node src/theme/themes/createThemes.js",
     "publish": "node publish",
-    "postinstall": "node dependencies-patch.js"
+    "postinstall": "node dependencies-patch.js",
+    "test:authz": "node --import ./tests/authz/hook.mjs tests/authz/run.mjs"
   },
   "engines": {
     "node": ">= 18",

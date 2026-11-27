@@ -125,7 +125,7 @@ export default memo(() => {
           <View style={styles.glass}>
             <Text style={styles.sectionLabel}>更新说明</Text>
             <Text style={styles.body}>
-              {guard.message || '修复旧版本存在的接口与安全问题。更新后无需重新激活，卡密与设备码保持不变。'}
+              {guard.message || '授权方式升级：旧的卡密全部作废。更新后请把「设备码」发给管理员开通，再绑定本机指纹。'}
             </Text>
             <View style={styles.divider} />
             <View style={styles.noticeRow}>
@@ -140,7 +140,7 @@ export default memo(() => {
             </Pressable>
           </Gradient>
 
-          <Text style={styles.footer}>更新后重新打开即可继续使用 · 卡密 / 设备码不会变化</Text>
+          <Text style={styles.footer}>设备码不变 · 旧卡密作废，需重新开通并绑定指纹</Text>
         </View>
       </View>
     </Modal>

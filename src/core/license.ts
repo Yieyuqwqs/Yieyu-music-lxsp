@@ -1,116 +1,135 @@
-// 授权校验（纯离线）：客户端只内置公钥/校验密钥，卡密由管理端签发
+// 授权（纯离线可用的「认设备 + 认人」）
+//
+//   认设备：设备码 = 硬件信息派生（C++）→ 管理员填进云端白名单 → whitelist.json
+//   认人  ：本机指纹解锁 Keystore 里的加密令牌，锁屏即熔断
+//
+// 卡密体系（16 位 YIEYU 码、对称校验码、黑名单哈希）已整体废弃。
+// 这里不再有任何「手动输入卡密」的入口；用户要粘贴的只有两种：
+//   · 迁移码 YMG1-xxx（老设备导出，24 小时有效，用于换机）
+//   · 离线授权串 YEYA.<到期日>.<签名>（管理员用 RSA 私钥签发，没网时救急）
 import { AppState } from 'react-native'
+
 import { getData, saveData, removeData } from '@/plugins/storage'
 import licenseActions from '@/store/license/action'
-import licenseState, { type LicenseRecord } from '@/store/license/state'
-import { sha256, randomHex } from '@/utils/sha256'
-import { verifyCardKey } from '@/utils/licenseCard'
+import licenseState from '@/store/license/state'
+import {
+  type AuthzToken, type BindVia, type EvaluateResult, type WhitelistEntry,
+  buildOfflineAuthPayload, decodeToken, encodeToken, evaluate, findEntry, fromExpToken,
+  isExpired, isUsableStatus, normalizeCode, parseBlacklist, parseWhitelist, unpackOfflineAuth,
+  MIGRATION_PREFIX, daysLeftOf,
+} from './authz/protocol'
+import authzNative from '@/utils/nativeModules/authz'
+import {
+  AUTHZ_BLACKLIST_FILE, AUTHZ_CLOCK_TOLERANCE, AUTHZ_REFRESH_INTERVAL, AUTHZ_SOURCE_TIMEOUT,
+  AUTHZ_SYNC_TIMEOUT, AUTHZ_USED_MIGRATION_LIMIT, AUTHZ_WHITELIST_FILE, authzSources,
+} from '@/config/authz'
 import { LICENSE_PUBLIC_KEY } from '@/config/licenseKey'
-import { BLACKLIST_SOURCES } from '@/config/blacklist'
+import { rsaVerify } from '@/utils/rsa'
 import { navigations } from '@/navigation'
 
-const KEY_DEVICE = 'license.deviceCode'
-const KEY_RECORD = 'license.record'
 const KEY_MAX_SEEN = 'license.maxSeenTime'
-// 本机黑名单：直接生效、不依赖网络
-const KEY_LOCAL_BAN = 'license.localBlacklist'
-// 云端黑名单缓存：拉取成功后落盘，断网/超时也能用
-const KEY_CLOUD_CACHE = 'license.cloudBlacklist'
+const KEY_CLOUD_CACHE = 'license.cloudCache'
+const KEY_USED_MIGRATIONS = 'license.usedMigrations'
+const KEY_BANNED = 'license.bannedEntry'
 
-/** 允许的时钟回拨容差：10 分钟（防止 NTP 校正误判） */
-const CLOCK_TOLERANCE = 10 * 60 * 1000
-/** 云端黑名单单个源的超时 */
-const CLOUD_FETCH_TIMEOUT = 3000
-/** 激活时等待云端黑名单的上限（超时直接跳过，绝不卡住） */
-const CLOUD_CHECK_TIMEOUT = 3500
+interface CloudSnapshot {
+  whitelist: { updatedAt: number, devices: WhitelistEntry[] } | null
+  blacklist: { updatedAt: number, keys: string[] } | null
+  at: number
+}
 
-const formatCode = (raw: string) => {
-  const up = raw.toUpperCase()
-  const groups: string[] = []
-  for (let i = 0; i < up.length; i += 4) groups.push(up.slice(i, i + 4))
-  return groups.join('-')
+let deviceCode = ''
+let entryCodeKey = ''
+let tokenExists = false
+let memoryToken: AuthzToken | null = null
+let nativeOk = false
+let biometricOk = false
+let biometricMessage = ''
+let cloudFresh = false
+let cloud: CloudSnapshot = { whitelist: null, blacklist: null, at: 0 }
+let inited = false
+let watcherStarted = false
+let screenOffBound = false
+
+const errText = (error: unknown) => {
+  const value = error as { message?: string } | null
+  return value?.message || '未知错误'
 }
 
 const withTimeout = <T>(promise: Promise<T>, ms: number, tip = 'timeout'): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { reject(new Error(tip)) }, ms)
   promise.then(
-    (value) => { clearTimeout(timer); resolve(value) },
-    (err) => { clearTimeout(timer); reject(err) },
+    value => { clearTimeout(timer); resolve(value) },
+    error => { clearTimeout(timer); reject(error) },
   )
 })
 
-/** 卡密哈希（黑名单只存哈希，不存明文） */
-export const cardHashOf = (card: string) => sha256('yieyu-card:' + String(card || '').replace(/\s/g, '').toUpperCase())
+/* --------------------------- 云端清单（多源并发） --------------------------- */
 
-/** 设备码：首次运行时本地随机生成并持久化（不发上网） */
-export const getDeviceCode = async(): Promise<string> => {
-  if (licenseState.deviceCode) return licenseState.deviceCode
-  let raw = await getData<string>(KEY_DEVICE)
-  if (!raw) {
-    raw = randomHex(32)
-    await saveData(KEY_DEVICE, raw)
-  }
-  const code = formatCode(sha256(raw).slice(0, 16))
-  licenseActions.setInfo({ deviceCode: code })
-  return code
+const fetchText = async(source: { url: string, headers?: Record<string, string> }): Promise<string> => {
+  const url = source.url + (source.url.includes('?') ? '&' : '?') + 't=' + Date.now()
+  const res = await withTimeout(fetch(url, {
+    headers: { 'User-Agent': 'Yieyu-music', ...(source.headers || {}) },
+  }), AUTHZ_SOURCE_TIMEOUT)
+  if (!res.ok) throw new Error('HTTP ' + res.status)
+  return withTimeout(res.text(), AUTHZ_SOURCE_TIMEOUT)
 }
 
-/* ------------------------ 黑名单：本机（立即生效）+ 云端（可选） ------------------------ */
-
-const readLocalBan = async(): Promise<string[]> => {
-  const list = await getData<string[]>(KEY_LOCAL_BAN)
-  return Array.isArray(list) ? list : []
-}
-
-const writeLocalBan = async(list: string[]) => {
-  await saveData(KEY_LOCAL_BAN, list.slice(-2000))
-}
-
-export const isBannedLocally = async(hash: string): Promise<boolean> => {
-  if (!hash) return false
-  return (await readLocalBan()).includes(hash)
-}
-
-/** 云端黑名单：多源并发 + 超时，取 updatedAt 最新的一份（各镜像缓存时间不同） */
-const fetchCloudBlacklist = async(): Promise<CloudResult | null> => {
-  const one = async(source: { url: string, headers?: Record<string, string> }): Promise<CloudResult> => {
-    const url = source.url + (source.url.includes('?') ? '&' : '?') + 't=' + Date.now()
-    const res = await withTimeout(fetch(url, { headers: { 'User-Agent': 'Yieyu-music', ...(source.headers || {}) } }), CLOUD_FETCH_TIMEOUT)
-    if (!res.ok) throw new Error('HTTP ' + res.status)
-    const data = await withTimeout(res.json() as Promise<{ keys?: string[], updatedAt?: string }>, CLOUD_FETCH_TIMEOUT)
-    if (!Array.isArray(data.keys)) throw new Error('bad data')
-    const parsed = Date.parse(String(data.updatedAt ?? ''))
-    return {
-      keys: data.keys.map(key => String(key).toLowerCase()),
-      updatedAt: Number.isNaN(parsed) ? 0 : parsed,
-    }
-  }
-  const tasks = BLACKLIST_SOURCES.map(source => one(source).catch(() => null))
-  const all = await Promise.all(tasks)
-  let best: CloudResult | null = null
-  for (const item of all) {
-    if (!item) continue
-    if (!best || item.updatedAt > best.updatedAt) best = item
+/** 同一份文件的多源并发拉取，取 updatedAt 最新的一份（镜像同步时间不一致） */
+const pullList = async <T extends { updatedAt: number }>(
+  file: string,
+  parse: (text: string) => T | null,
+): Promise<T | null> => {
+  const texts = await Promise.all(authzSources(file).map(source => fetchText(source).catch(() => null)))
+  let best: T | null = null
+  for (const text of texts) {
+    if (!text) continue
+    const parsed = parse(text)
+    if (!parsed) continue
+    if (!best || parsed.updatedAt > best.updatedAt) best = parsed
   }
   return best
 }
 
-const loadCloudBlacklist = async(): Promise<{ keys: string[], fromCache: boolean, checkedAt: number }> => {
-  const cached = await getData<{ keys: string[], at: number }>(KEY_CLOUD_CACHE)
+const readCloudCache = async() => {
   try {
-    const result = await withTimeout(fetchCloudBlacklist(), CLOUD_CHECK_TIMEOUT)
-    if (result) {
-      await saveData(KEY_CLOUD_CACHE, { keys: result.keys, at: Date.now() })
-      return { keys: result.keys, fromCache: false, checkedAt: Date.now() }
+    const cached = await getData<CloudSnapshot>(KEY_CLOUD_CACHE)
+    if (cached && (cached.whitelist || cached.blacklist)) {
+      cloud = {
+        whitelist: cached.whitelist ?? null,
+        blacklist: cached.blacklist ?? null,
+        at: cached.at ?? 0,
+      }
     }
   } catch {}
-  if (cached && Array.isArray(cached.keys)) return { keys: cached.keys, fromCache: true, checkedAt: cached.at ?? 0 }
-  return { keys: [], fromCache: true, checkedAt: 0 }
 }
 
-/* ------------------------ 时间与状态 ------------------------ */
+const writeCloudCache = async() => {
+  try {
+    await saveData(KEY_CLOUD_CACHE, { ...cloud, at: Date.now() })
+  } catch {}
+}
 
-/** 记录历史最大系统时间：用户把系统时间调回过去时可被发现 */
+/** 同步云端白名单 + 黑名单；返回是否拿到了新鲜数据 */
+const syncCloud = async(): Promise<boolean> => {
+  const [whitelist, blacklist] = await Promise.all([
+    withTimeout(pullList(AUTHZ_WHITELIST_FILE, parseWhitelist), AUTHZ_SYNC_TIMEOUT).catch(() => null),
+    withTimeout(pullList(AUTHZ_BLACKLIST_FILE, parseBlacklist), AUTHZ_SYNC_TIMEOUT).catch(() => null),
+  ])
+  const gotSomething = !!(whitelist || blacklist)
+  if (whitelist) cloud.whitelist = whitelist
+  if (blacklist) cloud.blacklist = blacklist
+  cloudFresh = gotSomething
+  if (gotSomething) await writeCloudCache()
+  licenseActions.setInfo({ cloudOnline: cloudFresh })
+  // 拉完立刻按新数据重算一次状态（撤权/续期/封禁都要马上体现）
+  await applyEvaluate()
+  return cloudFresh
+}
+
+/* --------------------------- 时间与封禁 --------------------------- */
+
+/** 记录历史最大系统时间：用户把时间调回过去时能被发现 */
 const touchMaxSeen = async(): Promise<number> => {
   const now = Date.now()
   const stored = await getData<number>(KEY_MAX_SEEN) ?? 0
@@ -120,146 +139,350 @@ const touchMaxSeen = async(): Promise<number> => {
   return maxSeen
 }
 
-const daysBetween = (target: number) => Math.ceil((target - Date.now()) / 86400000)
-
-/** 核心校验：到期时间 + 时间回拨检测 */
-const evaluate = (record: LicenseRecord | null, maxSeen: number) => {
-  if (!record) {
-    // 因为封禁而被收回的授权：保持「已被封禁」，直到重新激活成功
-    if (licenseState.status === 'banned') {
-      licenseActions.setInfo({ record: null, status: 'banned', message: '此卡密已被封禁', daysLeft: null })
-      return
-    }
-    licenseActions.setInfo({ record: null, status: 'none', message: '未激活', daysLeft: null })
-    return
+/** 本机条目是否被封禁：云端命中就本地留痕（断网也拦） */
+const resolveBanned = async(): Promise<boolean> => {
+  if (!entryCodeKey) return false
+  if (cloudFresh) {
+    const keys = cloud.blacklist?.keys ?? []
+    if (keys.includes(entryCodeKey)) await saveData(KEY_BANNED, entryCodeKey)
+    else if (await getData<string>(KEY_BANNED) === entryCodeKey) await removeData(KEY_BANNED)
   }
-  const now = Date.now()
-  // 系统时间被调回过去（超过容差）→ 直接失效
-  if (maxSeen - now > CLOCK_TOLERANCE) {
-    licenseActions.setInfo({
-      record,
-      status: 'tampered',
-      message: '检测到系统时间异常，请校准系统时间后重试',
-      daysLeft: null,
-    })
-    return
-  }
-  if (record.expiresAt) {
-    const expires = Date.parse(record.expiresAt)
-    if (now > expires) {
-      licenseActions.setInfo({ record, status: 'expired', message: '您的授权已到期，请联系管理员', daysLeft: 0 })
-      return
-    }
-    licenseActions.setInfo({
-      record,
-      status: 'active',
-      message: `VIP 已激活，剩余 ${daysBetween(expires)} 天`,
-      daysLeft: daysBetween(expires),
-    })
-    return
-  }
-  licenseActions.setInfo({ record, status: 'active', message: 'VIP 已激活，永久有效', daysLeft: null })
+  return (await getData<string>(KEY_BANNED)) === entryCodeKey
 }
 
-const readRecord = async() => licenseState.record ?? await getData<LicenseRecord>(KEY_RECORD)
+/* --------------------------- 状态机 --------------------------- */
 
-/* ------------------------ 激活 ------------------------ */
+const applyEvaluate = async(): Promise<EvaluateResult> => {
+  const maxSeen = await touchMaxSeen()
+  const clockSkew = maxSeen - Date.now() > AUTHZ_CLOCK_TOLERANCE
+  const entry = findEntry(cloud.whitelist?.devices ?? [], entryCodeKey)
+  const banned = await resolveBanned()
 
-/** 输入卡密激活：验签 + 设备码匹配 + 到期校验 + 黑名单 */
-export const activateLicense = async(cardKey: string): Promise<{ ok: boolean, message: string }> => {
-  const raw = String(cardKey || '').trim()
-  if (!raw) return { ok: false, message: '请输入卡密' }
-  const hash = cardHashOf(raw)
+  const result = evaluate({
+    nativeOk,
+    biometricOk,
+    biometricMessage,
+    hasToken: tokenExists,
+    token: memoryToken,
+    entry,
+    cloudFresh,
+    banned,
+    clockSkew,
+  })
 
-  // 1. 本机黑名单：毫秒级，直接拒绝
-  if (await isBannedLocally(hash)) return { ok: false, message: '此卡密已被封禁' }
+  if (result.status !== 'active') memoryToken = null
 
-  // 2. 离线验签（失败立刻返回，不会卡）
-  const deviceCode = await getDeviceCode()
-  let result: { expiresAt: string | null }
+  licenseActions.setInfo({
+    deviceCode,
+    status: result.status,
+    message: result.message,
+    exp: result.exp,
+    daysLeft: result.daysLeft,
+    hasToken: tokenExists,
+    biometricAvailable: biometricOk,
+    maxSeenTime: maxSeen,
+    cloudOnline: cloudFresh,
+  })
+
+  return result
+}
+
+let gateShown = false
+
+/** 失效时把全屏授权页推上来；已经在授权页就不重复推 */
+const pushGateIfBlocked = () => {
+  if (isUsableStatus(licenseState.status)) {
+    gateShown = false
+    return
+  }
+  if (gateShown) return
+  gateShown = true
+  void navigations.pushLicenseGate().catch(() => { gateShown = false })
+}
+
+/* --------------------------- 对外：设备码 --------------------------- */
+
+export const getDeviceCode = async(): Promise<string> => {
+  if (deviceCode) return deviceCode
   try {
-    result = verifyCardKey(LICENSE_PUBLIC_KEY, raw, deviceCode)
-  } catch (err) {
-    return { ok: false, message: (err as Error).message }
+    deviceCode = await authzNative.getDeviceCode()
+  } catch (error) {
+    console.warn('[authz] getDeviceCode failed:', errText(error))
+    return ''
   }
-
-  // 3. 云端黑名单（可选，最多 3.5 秒；拉不到就用缓存/直接放行）
-  const cloud = await loadCloudBlacklist()
-  if (cloud.keys.includes(hash)) {
-    await writeLocalBan([...await readLocalBan(), hash])
-    return { ok: false, message: '此卡密已被封禁' }
-  }
-
-  // 4. 写入授权记录
-  const compact = raw.replace(/\s/g, '')
-  const record: LicenseRecord = {
-    cardHash: hash,
-    // 16 位短卡密直接完整显示，旧版长卡密做脱敏
-    cardMasked: compact.length > 24 ? `${compact.slice(0, 10)}…${compact.slice(-6)}` : compact,
-    expiresAt: result.expiresAt,
-    activatedAt: new Date().toISOString(),
-  }
-  await saveData(KEY_RECORD, record)
-  const maxSeen = await touchMaxSeen()
-  evaluate(record, maxSeen)
-
-  const days = record.expiresAt ? daysBetween(Date.parse(record.expiresAt)) : 0
-  return {
-    ok: true,
-    message: record.expiresAt ? `激活成功，VIP 剩余 ${Math.max(days, 1)} 天` : '激活成功，永久有效',
-  }
+  licenseActions.setInfo({ deviceCode })
+  return deviceCode
 }
 
-/** 重新校验本地授权（到期 / 时间回拨 / 被封禁） */
-export const refreshLicense = async(): Promise<void> => {
-  const maxSeen = await touchMaxSeen()
-  const record = await readRecord()
-  if (record?.cardHash && await isBannedLocally(record.cardHash)) {
-    await removeData(KEY_RECORD)
-    licenseActions.setInfo({ record: null, status: 'banned', message: '此卡密已被封禁', daysLeft: null })
-    return
+/** 本机条目键（白名单比对用；管理端也用同一套算法） */
+const getEntryKey = async(): Promise<string> => {
+  if (entryCodeKey) return entryCodeKey
+  const code = await getDeviceCode()
+  if (!code) return ''
+  try {
+    entryCodeKey = await authzNative.getEntryKey(code)
+  } catch (error) {
+    console.warn('[authz] getEntryKey failed:', errText(error))
+    return ''
   }
-  evaluate(record, maxSeen)
+  return entryCodeKey
 }
 
-/** 应用启动时初始化 */
+/* --------------------------- 初始化 / 守护 --------------------------- */
+
 export const initLicense = async(): Promise<void> => {
-  await getDeviceCode()
-  const maxSeen = await touchMaxSeen()
-  evaluate(await readRecord(), maxSeen)
-  // 后台静默同步一次云端黑名单（不阻塞启动）
-  void loadCloudBlacklist().catch(() => {})
-}
-
-export const clearLicense = async(): Promise<void> => {
-  await removeData(KEY_RECORD)
-  evaluate(null, licenseState.maxSeenTime)
-}
-
-/* ------------------------- 运行期看门狗：失效立刻弹回拦截页 ------------------------- */
-
-let watcherStarted = false
-let lastBlocked = false
-
-const enforceGate = () => {
-  const blocked = licenseState.status !== 'active'
-  if (!blocked) {
-    lastBlocked = false
+  if (inited) {
+    await applyEvaluate()
     return
   }
-  if (lastBlocked) return
-  lastBlocked = true
-  void navigations.pushLicenseGate().catch(() => {})
+  inited = true
+
+  // 1. 授权核自检：C++ 那边的向量算不对就别放行（会明确告诉用户）
+  try {
+    const selfTest = await authzNative.authzSelfTest()
+    nativeOk = !selfTest
+    if (!nativeOk) console.warn('[authz] native self-test failed:', selfTest)
+  } catch (error) {
+    nativeOk = false
+    console.warn('[authz] native module unavailable:', errText(error))
+  }
+
+  // 2. 指纹状态
+  try {
+    const biometric = await authzNative.getBiometricState()
+    biometricOk = !!biometric.available
+    biometricMessage = biometric.message || ''
+  } catch (error) {
+    biometricOk = false
+    biometricMessage = errText(error)
+  }
+
+  // 3. 设备身份 + 本机令牌
+  await getDeviceCode()
+  await getEntryKey()
+  tokenExists = await authzNative.hasToken().catch(() => false)
+  memoryToken = null
+
+  // 4. 先用缓存出状态（不等网络），后台再拉云端
+  await readCloudCache()
+  await applyEvaluate()
+  void syncCloud().then(() => { pushGateIfBlocked() })
 }
 
-/** 启动看门狗：定时复检 + 回到前台复检 + 失效立即切回全屏拦截页 */
+/** 重新检查指纹硬件/录入状态（用户去系统设置录完指纹回来点一下） */
+export const recheckBiometric = async(): Promise<{ ok: boolean, message: string }> => {
+  try {
+    const biometric = await authzNative.getBiometricState()
+    biometricOk = !!biometric.available
+    biometricMessage = biometric.message || ''
+  } catch (error) {
+    biometricOk = false
+    biometricMessage = errText(error)
+  }
+  const result = await applyEvaluate()
+  if (!biometricOk) return { ok: false, message: biometricMessage || '仍然没有可用的指纹' }
+  if (result.status === 'ready') return { ok: true, message: '指纹已就绪，去绑定本机授权' }
+  if (result.status === 'locked') return { ok: true, message: '指纹已就绪，可以进入' }
+  return { ok: true, message: result.message }
+}
+
+/** 复检本地状态（到期 / 时间回拨 / 封禁 / 锁屏掉授权） */
+export const refreshLicense = async(): Promise<void> => {
+  await applyEvaluate()
+  pushGateIfBlocked()
+}
+
+/** 启动看门狗：定时复检 + 回前台复检 + 云端定期复查 + 锁屏熔断 */
 export const startLicenseWatcher = () => {
   if (watcherStarted) return
   watcherStarted = true
-  const tick = () => { void refreshLicense().finally(enforceGate) }
+
+  if (!screenOffBound) {
+    screenOffBound = true
+    authzNative.onScreenOff(() => {
+      // 锁屏即熔断：内存令牌清空，回来必须重新验指纹
+      memoryToken = null
+      void applyEvaluate().then(pushGateIfBlocked)
+    })
+  }
+
+  const tick = () => { void refreshLicense() }
   tick()
   setInterval(tick, 60 * 1000)
-  AppState.addEventListener('change', (next) => {
-    if (next === 'active') tick()
-  })
+  AppState.addEventListener('change', (next) => { if (next === 'active') tick() })
+  setInterval(() => { void syncCloud().then(pushGateIfBlocked) }, AUTHZ_REFRESH_INTERVAL)
+}
+
+/* --------------------------- 指纹：解锁 / 绑定 --------------------------- */
+
+const messageForBind = (exp: string | null) => {
+  if (!exp) return '绑定成功 · 永久有效'
+  const days = daysLeftOf(exp) ?? 0
+  return `绑定成功 · 剩余 ${Math.max(days, 1)} 天`
+}
+
+/** 把一份授权绑到本机（会弹指纹；令牌用 Keystore 加密） */
+const bindToken = async(exp: string | null, via: BindVia): Promise<{ ok: boolean, message: string }> => {
+  if (!nativeOk) return { ok: false, message: '授权模块不可用，请更新到最新版本' }
+  if (!biometricOk) return { ok: false, message: biometricMessage || '本机没有可用的指纹，请先去系统设置录入' }
+  if (!entryCodeKey) return { ok: false, message: '设备码还没准备好，请稍后重试' }
+
+  const token: AuthzToken = {
+    v: 1,
+    k: entryCodeKey,
+    exp: exp ?? null,
+    code: normalizeCode(deviceCode),
+    bound: new Date().toISOString(),
+    via,
+  }
+  try {
+    await authzNative.storeToken(encodeToken(token))
+  } catch (error) {
+    return { ok: false, message: errText(error) }
+  }
+  tokenExists = true
+  memoryToken = token
+  await applyEvaluate()
+  return { ok: true, message: messageForBind(exp) }
+}
+
+/** 已绑定过本机：验指纹解锁进入 */
+export const unlockWithFingerprint = async(): Promise<{ ok: boolean, message: string }> => {
+  if (!nativeOk) return { ok: false, message: '授权模块不可用，请更新到最新版本' }
+  if (!biometricOk) return { ok: false, message: biometricMessage || '本机没有可用的指纹' }
+
+  let raw: string
+  try {
+    raw = await authzNative.readToken()
+  } catch (error) {
+    await applyEvaluate()
+    return { ok: false, message: errText(error) }
+  }
+
+  const token = decodeToken(raw)
+  if (!token) {
+    await clearLocalLicense()
+    return { ok: false, message: '本机授权数据已损坏，请重新绑定' }
+  }
+  if (token.k !== entryCodeKey) {
+    await clearLocalLicense()
+    return { ok: false, message: '这份授权不属于本机，请重新绑定' }
+  }
+  if (isExpired(token.exp)) {
+    memoryToken = null
+    await applyEvaluate()
+    return { ok: false, message: '授权已到期，请联系管理员续期' }
+  }
+
+  memoryToken = token
+  // 顺手把云端变更（续期/改期）同步一下，让状态机决定要不要重新绑定
+  void syncCloud()
+  const result = await applyEvaluate()
+  if (result.status === 'ready') {
+    return { ok: false, message: '授权信息有变更，请点「绑定本机指纹」完成同步' }
+  }
+  if (result.status !== 'active') return { ok: false, message: result.message }
+  return { ok: true, message: messageForBind(token.exp) }
+}
+
+/** 只拉云端状态（不弹指纹）：给「刷新」按钮用 */
+export const refreshAuthorization = async(): Promise<{ ok: boolean, message: string }> => {
+  const fresh = await syncCloud()
+  await applyEvaluate()
+  if (!fresh) return { ok: false, message: '暂时连不上云端，请检查网络后再试' }
+  const entry = findEntry(cloud.whitelist?.devices ?? [], entryCodeKey)
+  if (!entry) return { ok: false, message: '云端名单里还没有这台设备，请把设备码发给管理员' }
+  if (isExpired(entry.exp)) return { ok: false, message: '这台设备的授权已到期，请联系管理员续期' }
+  return { ok: true, message: tokenExists ? '已授权，验证指纹后进入' : '管理员已授权，去绑定本机指纹' }
+}
+
+/** 白名单已授权：绑指纹（首次绑定 / 续期后重新绑定） */
+export const bindByWhitelist = async(): Promise<{ ok: boolean, message: string }> => {
+  if (!cloudFresh) await syncCloud()
+  const entry = findEntry(cloud.whitelist?.devices ?? [], entryCodeKey)
+  if (!entry) {
+    await applyEvaluate()
+    return { ok: false, message: '云端名单里还没有这台设备，请把设备码发给管理员' }
+  }
+  if (isExpired(entry.exp)) {
+    await applyEvaluate()
+    return { ok: false, message: '这台设备的授权已到期，请联系管理员续期' }
+  }
+  return bindToken(entry.exp ?? null, 'whitelist')
+}
+
+/* --------------------------- 换机 / 离线授权 --------------------------- */
+
+const applyMigration = async(code: string): Promise<{ ok: boolean, message: string }> => {
+  let result: { expMs: number, issuedSec: number, srcTag: string, nonce: number }
+  try {
+    result = await authzNative.importMigration(code)
+  } catch (error) {
+    return { ok: false, message: errText(error) }
+  }
+
+  const marker = `${result.issuedSec}:${result.nonce}`
+  const used = await getData<string[]>(KEY_USED_MIGRATIONS) ?? []
+  if (Array.isArray(used) && used.includes(marker)) {
+    return { ok: false, message: '这个迁移码本机已经用过了，请让老设备重新导出' }
+  }
+
+  const exp = result.expMs > 0 ? new Date(result.expMs).toISOString() : null
+  const bound = await bindToken(exp, 'migration')
+  if (bound.ok) {
+    await saveData(KEY_USED_MIGRATIONS, [...used, marker].slice(-AUTHZ_USED_MIGRATION_LIMIT))
+  }
+  return bound
+}
+
+const applyOfflineAuth = async(code: string): Promise<{ ok: boolean, message: string }> => {
+  const packed = unpackOfflineAuth(code)
+  if (!packed) return { ok: false, message: '离线授权串格式不正确' }
+  const payload = buildOfflineAuthPayload(deviceCode, packed.expToken)
+  if (!rsaVerify(LICENSE_PUBLIC_KEY, payload, packed.signatureHex)) {
+    return { ok: false, message: '离线授权串无效，或不是签发给本机的' }
+  }
+  const exp = fromExpToken(packed.expToken)
+  if (isExpired(exp)) return { ok: false, message: '这张离线授权已经过期' }
+  return bindToken(exp, 'offline')
+}
+
+/** 粘贴框统一入口：自动分辨迁移码 / 离线授权串 */
+export const applyAuthString = async(raw: string): Promise<{ ok: boolean, message: string }> => {
+  const text = String(raw ?? '').replace(/\s/g, '').trim()
+  if (!text) return { ok: false, message: '请粘贴迁移码或离线授权串' }
+  if (!nativeOk) return { ok: false, message: '授权模块不可用，请更新到最新版本' }
+  if (text.toUpperCase().startsWith(MIGRATION_PREFIX)) return applyMigration(text)
+  return applyOfflineAuth(text)
+}
+
+/** 老设备导出迁移码（必须先验过指纹） */
+export const exportMigrationCode = async(): Promise<{ ok: boolean, message: string, code?: string }> => {
+  if (!nativeOk) return { ok: false, message: '授权模块不可用，请更新到最新版本' }
+  if (!memoryToken) return { ok: false, message: '请先验证指纹进入，再导出迁移码' }
+  const expMs = memoryToken.exp ? Date.parse(memoryToken.exp) : 0
+  try {
+    const code = await authzNative.exportMigration(Number.isNaN(expMs) ? 0 : expMs)
+    return { ok: true, message: '迁移码 24 小时内有效，用一次即失效', code }
+  } catch (error) {
+    return { ok: false, message: errText(error) }
+  }
+}
+
+/** 解除本机绑定（换机后老设备用；云端条目请让管理员删） */
+export const clearLocalLicense = async(): Promise<void> => {
+  memoryToken = null
+  tokenExists = false
+  try {
+    await authzNative.clearToken()
+  } catch (error) {
+    console.warn('[authz] clearToken failed:', errText(error))
+  }
+  await applyEvaluate()
+}
+
+/** 手动锁定：下次进入必须重新验指纹 */
+export const lockNow = async(): Promise<void> => {
+  memoryToken = null
+  await applyEvaluate()
 }

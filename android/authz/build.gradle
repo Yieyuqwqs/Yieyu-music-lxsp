@@ -1,0 +1,35 @@
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'cn.toside.music.authz'
+    compileSdk rootProject.ext.compileSdkVersion
+    ndkVersion rootProject.ext.ndkVersion
+
+    defaultConfig {
+        minSdk rootProject.ext.minSdkVersion
+        // 这个模块要覆盖全部 ABI（32 位机器也得能验授权），所以不设 abiFilters
+        externalNativeBuild {
+            cmake {
+                arguments "-DANDROID_STL=c++_static"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation("com.facebook.react:react-android")
+    // BiometricPrompt + CryptoObject（强生物识别）
+    implementation 'androidx.biometric:biometric:1.1.0'
+}

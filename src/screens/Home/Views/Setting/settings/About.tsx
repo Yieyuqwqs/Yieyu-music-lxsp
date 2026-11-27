@@ -104,7 +104,7 @@ export default memo(() => {
       <View style={styles.part}>
         <Text style={styles.text}>授权 / 会员：</Text>
         <TouchableOpacity onPress={openLicensePanel}>
-          <Text style={textLinkStyle}>{isPro ? (license.record?.expiresAt ? '已激活，有效期至 ' + license.record.expiresAt.slice(0, 10) : '已激活（永久）') : '未激活，点此输入授权码'}</Text>
+          <Text style={textLinkStyle}>{isPro ? (license.exp ? '已授权，有效期至 ' + license.exp.slice(0, 10) : '已授权（永久）') : '未授权，点此查看 / 绑定指纹'}</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.part}>
@@ -112,7 +112,7 @@ export default memo(() => {
         <TouchableOpacity onPress={openLicensePanel}>
           <Text style={textLinkStyle}>{license.deviceCode || '生成中…'}</Text>
         </TouchableOpacity>
-        <Text style={styles.text}>（发给管理员生成卡密）</Text>
+        <Text style={styles.text}>（发给管理员开通授权）</Text>
       </View>
       <View style={styles.part}>
         <Text style={styles.text} >本软件完全免费，代码已开源。开源地址：</Text>

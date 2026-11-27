@@ -5,9 +5,11 @@ import Text from '@/components/common/Text'
 import Input from '@/components/common/Input'
 import Button from '@/components/common/Button'
 import ForceUpdateModal from '@/components/ForceUpdateModal'
-import { activateLicense, getDeviceCode } from '@/core/license'
+import {
+  applyAuthString, bindByWhitelist, getDeviceCode, recheckBiometric, refreshAuthorization, unlockWithFingerprint,
+} from '@/core/license'
+import licenseState from '@/store/license/state'
 import { useLicenseInfo, vipStatusText } from '@/store/license/hook'
-import { useGuardInfo } from '@/store/guard/hook'
 import { toast, clipboardWriteText } from '@/utils/tools'
 import { navigations } from '@/navigation'
 
@@ -78,39 +80,104 @@ const Aurora = ({ color, size, from, to, duration, delay }: {
   )
 }
 
+const enterHome = async() => {
+  await navigations.pushHomeScreen()
+}
+
 export default memo(({ componentId }: { componentId: string }) => {
   const info = useLicenseInfo()
-  const guard = useGuardInfo()
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
-
-  const offline = guard.status === 'offline'
+  const [showImport, setShowImport] = useState(false)
+  const autoTried = useRef(false)
 
   useEffect(() => { void getDeviceCode() }, [])
 
-  const handleCopy = useCallback(() => {
-    clipboardWriteText(info.deviceCode)
-    toast('设备码已复制')
-  }, [info.deviceCode])
+  const status = info.status
+  const statusLine = useMemo(() => vipStatusText(info), [info])
+  const unlocked = status === 'active'
+  const needBind = status === 'ready'
+  const needUnlock = status === 'locked'
 
-  const handleActivate = useCallback(() => {
+  const toHome = useCallback(async() => {
+    await navigations.pushHomeScreen()
+  }, [])
+
+  /** 统一执行：失败弹窗、成功 toast，after 里决定要不要进主界面 */
+  const exec = useCallback(async(
+    task: () => Promise<{ ok: boolean, message: string }>,
+    after?: () => Promise<void> | void,
+  ) => {
     if (busy) return
     setBusy(true)
-    void activateLicense(code)
-      .then(async(res) => {
-        if (res.ok) {
-          toast(res.message, 'long')
-          setCode('')
-          await navigations.pushHomeScreen()
-        } else {
-          Alert.alert('激活失败', res.message)
-        }
-      })
-      .catch((err: Error) => { Alert.alert('激活失败', err.message || '未知错误') })
-      .finally(() => setBusy(false))
-  }, [busy, code])
+    try {
+      const res = await task()
+      if (!res.ok) {
+        Alert.alert('授权提示', res.message)
+        return
+      }
+      toast(res.message, 'long')
+      if (after) await after()
+    } catch (error) {
+      Alert.alert('授权失败', (error as Error)?.message ?? '未知错误')
+    } finally {
+      setBusy(false)
+    }
+  }, [busy])
 
-  const statusText = useMemo(() => vipStatusText(info), [info])
+  const enterIfActive = useCallback(async() => {
+    if (licenseState.status === 'active') await toHome()
+  }, [toHome])
+
+  const handleCopy = useCallback(() => {
+    if (!info.deviceCode) return
+    clipboardWriteText(info.deviceCode)
+    toast('设备码已复制，发给管理员开通')
+  }, [info.deviceCode])
+
+  const handlePrimary = useCallback(() => {
+    if (needUnlock) {
+      void exec(unlockWithFingerprint, enterIfActive)
+      return
+    }
+    if (needBind) {
+      void exec(bindByWhitelist, enterIfActive)
+      return
+    }
+    if (status === 'no_biometric') {
+      void exec(recheckBiometric)
+      return
+    }
+    void exec(refreshAuthorization)
+  }, [enterIfActive, exec, needBind, needUnlock, status])
+
+  const handleImport = useCallback(() => {
+    const text = code.trim()
+    if (!text) {
+      Alert.alert('提示', '请粘贴迁移码或离线授权串')
+      return
+    }
+    void exec(async() => {
+      const res = await applyAuthString(text)
+      if (res.ok) setCode('')
+      return res
+    }, enterIfActive)
+  }, [code, enterIfActive, exec])
+
+  // 联网后发现自己刚被管理员授权：直接弹指纹（「管理员填完设备码他就能用」）
+  useEffect(() => {
+    if (status !== 'ready' || autoTried.current) return
+    autoTried.current = true
+    void exec(bindByWhitelist, enterIfActive)
+  }, [enterIfActive, exec, status])
+
+  const primaryLabel = useMemo(() => {
+    if (busy) return '处理中…'
+    if (needUnlock) return '按指纹进入'
+    if (needBind) return '绑定本机指纹'
+    if (status === 'no_biometric') return '重新检查指纹'
+    return '刷新授权状态'
+  }, [busy, needBind, needUnlock, status])
 
   return (
     <View style={{ flex: 1, backgroundColor: '#08090c' }}>
@@ -128,16 +195,13 @@ export default memo(({ componentId }: { componentId: string }) => {
 
       <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 60 }} keyboardShouldPersistTaps="handled">
         <Text style={{ color: '#fff', fontSize: 30, fontWeight: '800', letterSpacing: 1 }}>Yieyu Music</Text>
-        <Text style={{ color: '#8b93a1', fontSize: 13, marginTop: 6, letterSpacing: 2 }}>MEMBERSHIP LICENSE</Text>
+        <Text style={{ color: '#8b93a1', fontSize: 13, marginTop: 6, letterSpacing: 2 }}>DEVICE LICENSE · FINGERPRINT</Text>
 
         <View style={{ marginTop: 26, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', padding: 18 }}>
           <Text style={{ color: '#8b93a1', fontSize: 12 }}>授权状态</Text>
-          <Text style={{ color: info.status === 'active' ? '#7ee787' : '#ff8fa3', fontSize: 18, fontWeight: '700', marginTop: 4 }}>{statusText}</Text>
-          {info.status === 'expired'
-            ? <Text style={{ color: '#ff8fa3', fontSize: 12, marginTop: 8, lineHeight: 18 }}>您的授权已到期，请联系管理员续期后再激活。</Text>
-            : null}
-          {info.status === 'tampered'
-            ? <Text style={{ color: '#e3b341', fontSize: 12, marginTop: 8, lineHeight: 18 }}>检测到系统时间被调回，请把手机时间设为自动校准后重试。</Text>
+          <Text style={{ color: unlocked ? '#7ee787' : '#ff8fa3', fontSize: 18, fontWeight: '700', marginTop: 4 }}>{statusLine}</Text>
+          {info.message
+            ? <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 8, lineHeight: 18 }}>{info.message}</Text>
             : null}
 
           <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 18 }}>本机设备码（发给管理员）</Text>
@@ -146,42 +210,65 @@ export default memo(({ componentId }: { componentId: string }) => {
               {info.deviceCode || '生成中…'}
             </Text>
           </TouchableOpacity>
-          <Text style={{ color: '#5a6270', fontSize: 11, marginTop: 6 }}>点击复制 · 换机或清除数据后设备码会变</Text>
+          <Text style={{ color: '#5a6270', fontSize: 11, marginTop: 6 }}>
+            点击复制 · 硬件派生：重装/清数据不变，换手机才变
+          </Text>
 
-          {offline && info.status !== 'active'
-            ? (
-              <Text style={{ color: '#e3b341', fontSize: 12, marginTop: 12, lineHeight: 18 }}>
-                已持有卡密可直接在下方粘贴激活（本机离线校验，16 位短卡密）。
-              </Text>
-            )
-            : null}
-
-          <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 18 }}>授权码</Text>
-          <View style={{ backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingHorizontal: 10, marginTop: 6 }}>
-            <Input
-              value={code}
-              onChangeText={setCode}
-              placeholder="粘贴卡密，例如 YIEYU-XXXX-XXXXX"
-              placeholderTextColor="#4b5563"
-              autoCapitalize="characters"
-              autoCorrect={false}
-              multiline
-              style={{ color: '#e5e7eb', minHeight: 64, fontSize: 12 }}
-            />
-          </View>
-
-          <View style={{ marginTop: 16 }}>
+          <View style={{ marginTop: 18 }}>
             <Button
-              onPress={handleActivate}
+              onPress={handlePrimary}
               style={{ backgroundColor: busy ? '#2b303b' : '#ff4d6d', borderRadius: 10, paddingVertical: 13, alignItems: 'center' }}
             >
-              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{busy ? '校验中…' : '激活并进入'}</Text>
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>{primaryLabel}</Text>
             </Button>
           </View>
+
+          {!needBind && !needUnlock
+            ? (
+              <TouchableOpacity onPress={() => { void exec(refreshAuthorization) }} style={{ marginTop: 12, alignItems: 'center' }}>
+                <Text style={{ color: '#7c9cff', fontSize: 13 }}>{busy ? '刷新中…' : '管理员已开通？点这里刷新云端授权'}</Text>
+              </TouchableOpacity>
+            )
+            : null}
         </View>
 
+        <TouchableOpacity onPress={() => setShowImport(v => !v)} style={{ marginTop: 18, alignItems: 'center' }}>
+          <Text style={{ color: '#8b93a1', fontSize: 12 }}>{showImport ? '收起' : '换手机 / 没网？用迁移码或离线授权串'}</Text>
+        </TouchableOpacity>
+
+        {showImport
+          ? (
+            <View style={{ marginTop: 12, backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', padding: 14 }}>
+              <Text style={{ color: '#8b93a1', fontSize: 12 }}>
+                迁移码以 YMG1 开头（老设备「授权中心」导出，24 小时有效）；离线授权串以 YEYA 开头（管理员签发）
+              </Text>
+              <View style={{ backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingHorizontal: 10, marginTop: 8 }}>
+                <Input
+                  value={code}
+                  onChangeText={setCode}
+                  placeholder="粘贴迁移码 / 离线授权串"
+                  placeholderTextColor="#4b5563"
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  multiline
+                  style={{ color: '#e5e7eb', minHeight: 64, fontSize: 12 }}
+                />
+              </View>
+              <View style={{ marginTop: 12 }}>
+                <Button
+                  onPress={handleImport}
+                  style={{ backgroundColor: busy ? '#2b303b' : '#3b9cff', borderRadius: 10, paddingVertical: 12, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{busy ? '校验中…' : '导入并绑定指纹'}</Text>
+                </Button>
+              </View>
+            </View>
+          )
+          : null}
+
         <Text style={{ color: '#4b5563', fontSize: 11, lineHeight: 18, marginTop: 18, textAlign: 'center' }}>
-          未激活无法进入主界面。「设置 → 关于 → 授权」仅在激活后可见。
+          卡密体系已废除：旧的 16 位卡密全部作废，请把上面的设备码发给管理员重新开通。{'\n'}
+          锁屏或重开 App 都要重新验证一次指纹。
         </Text>
       </ScrollView>
     </View>

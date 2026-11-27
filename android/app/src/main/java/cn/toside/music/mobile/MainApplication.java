@@ -20,6 +20,7 @@ import cn.toside.music.mobile.crypto.CryptoPackage;
 import cn.toside.music.mobile.lyric.LyricPackage;
 import cn.toside.music.mobile.utils.UtilsPackage;
 import cn.toside.music.core.CorePackage;
+import cn.toside.music.authz.AuthzPackage;
 
 public class MainApplication extends NavigationApplication {
 
@@ -53,6 +54,8 @@ public class MainApplication extends NavigationApplication {
           packages.add(new UtilsPackage());
           // M0：Fat Core 门面（业务状态/网络/存储将逐步下沉到 C++）
           packages.add(new CorePackage());
+          // 授权核：设备码/白名单/迁移码（C++）+ 指纹与 Keystore 令牌（Java），客户端与管理端都要
+          packages.add(new AuthzPackage());
           packages.add(new CryptoPackage());
           return packages;
         }
