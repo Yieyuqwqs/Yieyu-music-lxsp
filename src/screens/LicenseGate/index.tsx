@@ -205,7 +205,9 @@ export default memo(({ componentId }: { componentId: string }) => {
       return
     }
     void exec(refreshAuthorization)
-  }, [enterIfActive, exec, needBind, needUnlock, status])
+    // ⚠️ ensureQQ 必须进依赖：它闭包里的 qq 会随输入变化，
+    // 少写这一个就是「明明填了 QQ，点绑定却提示请填写 QQ」的 bug
+  }, [ensureQQ, enterIfActive, exec, needBind, needUnlock, status])
 
   const handleImport = useCallback(() => {
     const text = code.trim()
