@@ -133,6 +133,9 @@ jobs:
       # update.json 推到公开只读仓库 Yieyu-Update。顺序不能反：先传包，最后推清单，
       # 这样客户端从清单里拿到的下载地址永远已经存在。
       - name: Publish to public update repo (Yieyu-Update)
+        # ⚠️ 只有主仓库自动发版：旧客户端（Aurora-63 及以前）的强更弹窗只认 github.com 下载页，
+        # 国内打不开 → 自动把 minSupportedVersion 顶上去会把老用户直接锁死。
+        # 过渡期的包由维护者手动发到 Yieyu-Update，并把 latestVersion 顶上去、minSupportedVersion 保持旧值。
         if: ${{ github.repository == 'Yieyuqwqs/Yieyu-music' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
         shell: bash
         env:
