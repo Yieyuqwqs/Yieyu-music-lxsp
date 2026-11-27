@@ -14,6 +14,8 @@ export interface InitState {
   daysLeft: number | null
   /** 本机是否已经绑定过指纹（有 Keystore 密文） */
   hasToken: boolean
+  /** 绑定的 QQ（掩码，如 123***89）；未解锁时为空 */
+  boundQQ: string
   /** 指纹硬件是否可用 */
   biometricAvailable: boolean
   /** 最近一次云端清单是否是新鲜拉到的 */
@@ -29,6 +31,7 @@ const state: InitState = {
   exp: null,
   daysLeft: null,
   hasToken: false,
+  boundQQ: '',
   biometricAvailable: false,
   cloudOnline: false,
   maxSeenTime: 0,

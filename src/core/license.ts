@@ -15,7 +15,8 @@ import licenseState from '@/store/license/state'
 import {
   type AuthzToken, type BindVia, type EvaluateResult, type WhitelistEntry,
   buildOfflineAuthPayload, decodeToken, encodeToken, evaluate, findEntry, fromExpToken,
-  isExpired, isUsableStatus, normalizeCode, parseBlacklist, parseWhitelist, unpackOfflineAuth,
+  isExpired, isUsableStatus, isValidQQ, maskQQ, normalizeCode, parseBlacklist, parseWhitelist,
+  unpackOfflineAuth,
   MIGRATION_PREFIX, daysLeftOf,
 } from './authz/protocol'
 import authzNative from '@/utils/nativeModules/authz'
@@ -32,6 +33,7 @@ const KEY_MAX_SEEN = 'license.maxSeenTime'
 const KEY_CLOUD_CACHE = 'license.cloudCache'
 const KEY_USED_MIGRATIONS = 'license.usedMigrations'
 const KEY_BANNED = 'license.bannedEntry'
+const KEY_BANNED_QQ = 'license.bannedQq'
 
 interface CloudSnapshot {
   whitelist: { updatedAt: number, devices: WhitelistEntry[] } | null
@@ -150,6 +152,32 @@ const resolveBanned = async(): Promise<boolean> => {
   return (await getData<string>(KEY_BANNED)) === entryCodeKey
 }
 
+/**
+ * QQ 是否被封禁：换设备也拦（设备条目键变了，QQ 键不变）。
+ * 和条目键一样：云端命中就本地留痕，断网照样拦。
+ */
+const isQQBanned = async(qqKeyValue: string): Promise<boolean> => {
+  if (!qqKeyValue) return false
+  if (cloudFresh) {
+    const qkeys = cloud.blacklist?.qkeys ?? []
+    if (qkeys.includes(qqKeyValue)) await saveData(KEY_BANNED_QQ, qqKeyValue)
+    else if (await getData<string>(KEY_BANNED_QQ) === qqKeyValue) await removeData(KEY_BANNED_QQ)
+  }
+  return (await getData<string>(KEY_BANNED_QQ)) === qqKeyValue
+}
+
+/** 给 UI/管理端用：算 QQ 的条目键 */
+export const qqKeyOf = async(qq: string): Promise<string> => {
+  const normalized = normalizeCode(qq)
+  if (!normalized) return ''
+  try {
+    return await authzNative.getQqKey(normalized)
+  } catch (error) {
+    console.warn('[authz] getQqKey failed:', errText(error))
+    return ''
+  }
+}
+
 /* --------------------------- 状态机 --------------------------- */
 
 const applyEvaluate = async(): Promise<EvaluateResult> => {
@@ -157,6 +185,7 @@ const applyEvaluate = async(): Promise<EvaluateResult> => {
   const clockSkew = maxSeen - Date.now() > AUTHZ_CLOCK_TOLERANCE
   const entry = findEntry(cloud.whitelist?.devices ?? [], entryCodeKey)
   const banned = await resolveBanned()
+  const qqBanned = await isQQBanned(memoryToken?.qqKey ?? '')
 
   const result = evaluate({
     nativeOk,
@@ -167,6 +196,7 @@ const applyEvaluate = async(): Promise<EvaluateResult> => {
     entry,
     cloudFresh,
     banned,
+    qqBanned,
     clockSkew,
   })
 
@@ -179,6 +209,7 @@ const applyEvaluate = async(): Promise<EvaluateResult> => {
     exp: result.exp,
     daysLeft: result.daysLeft,
     hasToken: tokenExists,
+    boundQQ: memoryToken?.qqMask ?? '',
     biometricAvailable: biometricOk,
     maxSeenTime: maxSeen,
     cloudOnline: cloudFresh,
@@ -321,11 +352,22 @@ const messageForBind = (exp: string | null) => {
   return `绑定成功 · 剩余 ${Math.max(days, 1)} 天`
 }
 
-/** 把一份授权绑到本机（会弹指纹；令牌用 Keystore 加密） */
-const bindToken = async(exp: string | null, via: BindVia): Promise<{ ok: boolean, message: string }> => {
+/**
+ * 把一份授权绑到本机（会弹指纹；令牌用 Keystore 加密）。
+ *
+ * QQ 是**必填**的：设备码只认机器，绑了 QQ 才知道这机器是谁的；
+ * 管理端也能直接按 QQ 封禁（换设备同样拦得住）。
+ */
+const bindToken = async(exp: string | null, via: BindVia, qq: string): Promise<{ ok: boolean, message: string }> => {
   if (!nativeOk) return { ok: false, message: '授权模块不可用，请更新到最新版本' }
   if (!biometricOk) return { ok: false, message: biometricMessage || '本机没有可用的指纹，请先去系统设置录入' }
   if (!entryCodeKey) return { ok: false, message: '设备码还没准备好，请稍后重试' }
+
+  const normalizedQQ = String(qq ?? '').replace(/[^0-9]/g, '')
+  if (!isValidQQ(normalizedQQ)) return { ok: false, message: '请填写有效的 QQ 号（5~12 位数字）' }
+  const qk = await qqKeyOf(normalizedQQ)
+  if (!qk) return { ok: false, message: 'QQ 校验没算出来，请更新到最新版本' }
+  if (await isQQBanned(qk)) return { ok: false, message: '这个 QQ 已被封禁，无法绑定' }
 
   const token: AuthzToken = {
     v: 1,
@@ -334,6 +376,8 @@ const bindToken = async(exp: string | null, via: BindVia): Promise<{ ok: boolean
     code: normalizeCode(deviceCode),
     bound: new Date().toISOString(),
     via,
+    qqMask: maskQQ(normalizedQQ),
+    qqKey: qk,
   }
   try {
     await authzNative.storeToken(encodeToken(token))
@@ -397,7 +441,7 @@ export const refreshAuthorization = async(): Promise<{ ok: boolean, message: str
 }
 
 /** 白名单已授权：绑指纹（首次绑定 / 续期后重新绑定） */
-export const bindByWhitelist = async(): Promise<{ ok: boolean, message: string }> => {
+export const bindByWhitelist = async(qq: string): Promise<{ ok: boolean, message: string }> => {
   if (!cloudFresh) await syncCloud()
   const entry = findEntry(cloud.whitelist?.devices ?? [], entryCodeKey)
   if (!entry) {
@@ -408,12 +452,21 @@ export const bindByWhitelist = async(): Promise<{ ok: boolean, message: string }
     await applyEvaluate()
     return { ok: false, message: '这台设备的授权已到期，请联系管理员续期' }
   }
-  return bindToken(entry.exp ?? null, 'whitelist')
+  // 管理员开通时如果已经填了 QQ，这里必须对得上（防止把别人的授权挪到自己机器上）
+  const normalizedQQ = String(qq ?? '').replace(/[^0-9]/g, '')
+  if (entry.qk && isValidQQ(normalizedQQ)) {
+    const qk = await qqKeyOf(normalizedQQ)
+    if (qk && qk !== entry.qk) {
+      await applyEvaluate()
+      return { ok: false, message: '这台设备的授权绑定的是另一个 QQ，请联系管理员核对' }
+    }
+  }
+  return bindToken(entry.exp ?? null, 'whitelist', normalizedQQ)
 }
 
 /* --------------------------- 换机 / 离线授权 --------------------------- */
 
-const applyMigration = async(code: string): Promise<{ ok: boolean, message: string }> => {
+const applyMigration = async(code: string, qq: string): Promise<{ ok: boolean, message: string }> => {
   let result: { expMs: number, issuedSec: number, srcTag: string, nonce: number }
   try {
     result = await authzNative.importMigration(code)
@@ -428,14 +481,14 @@ const applyMigration = async(code: string): Promise<{ ok: boolean, message: stri
   }
 
   const exp = result.expMs > 0 ? new Date(result.expMs).toISOString() : null
-  const bound = await bindToken(exp, 'migration')
+  const bound = await bindToken(exp, 'migration', qq)
   if (bound.ok) {
     await saveData(KEY_USED_MIGRATIONS, [...used, marker].slice(-AUTHZ_USED_MIGRATION_LIMIT))
   }
   return bound
 }
 
-const applyOfflineAuth = async(code: string): Promise<{ ok: boolean, message: string }> => {
+const applyOfflineAuth = async(code: string, qq: string): Promise<{ ok: boolean, message: string }> => {
   const packed = unpackOfflineAuth(code)
   if (!packed) return { ok: false, message: '离线授权串格式不正确' }
   const payload = buildOfflineAuthPayload(deviceCode, packed.expToken)
@@ -444,16 +497,17 @@ const applyOfflineAuth = async(code: string): Promise<{ ok: boolean, message: st
   }
   const exp = fromExpToken(packed.expToken)
   if (isExpired(exp)) return { ok: false, message: '这张离线授权已经过期' }
-  return bindToken(exp, 'offline')
+  return bindToken(exp, 'offline', qq)
 }
 
-/** 粘贴框统一入口：自动分辨迁移码 / 离线授权串 */
-export const applyAuthString = async(raw: string): Promise<{ ok: boolean, message: string }> => {
+/** 粘贴框统一入口：自动分辨迁移码 / 离线授权串（都要带 QQ） */
+export const applyAuthString = async(raw: string, qq: string): Promise<{ ok: boolean, message: string }> => {
   const text = String(raw ?? '').replace(/\s/g, '').trim()
   if (!text) return { ok: false, message: '请粘贴迁移码或离线授权串' }
   if (!nativeOk) return { ok: false, message: '授权模块不可用，请更新到最新版本' }
-  if (text.toUpperCase().startsWith(MIGRATION_PREFIX)) return applyMigration(text)
-  return applyOfflineAuth(text)
+  if (!isValidQQ(String(qq ?? '').replace(/[^0-9]/g, ''))) return { ok: false, message: '请先填写有效的 QQ 号（5~12 位数字）' }
+  if (text.toUpperCase().startsWith(MIGRATION_PREFIX)) return applyMigration(text, qq)
+  return applyOfflineAuth(text, qq)
 }
 
 /** 老设备导出迁移码（必须先验过指纹） */
@@ -468,6 +522,9 @@ export const exportMigrationCode = async(): Promise<{ ok: boolean, message: stri
     return { ok: false, message: errText(error) }
   }
 }
+
+/** 当前本机绑定的 QQ（掩码），没解锁时为空 */
+export const getBoundQQ = (): string => memoryToken?.qqMask ?? ''
 
 /** 解除本机绑定（换机后老设备用；云端条目请让管理员删） */
 export const clearLocalLicense = async(): Promise<void> => {

@@ -25,6 +25,10 @@ export interface WhitelistEntry {
   k: string
   exp: string | null
   at?: string
+  /** 绑定 QQ 的掩码（123***89），公开文件里只能看到这个 */
+  qq?: string
+  /** QQ 的 HMAC 键：按 QQ 封禁/反查都靠它（公开文件里看不到原号） */
+  qk?: string
 }
 
 /** 本机令牌（加密后落 Keystore，明文只在内存里） */
@@ -39,6 +43,29 @@ export interface AuthzToken {
   /** 绑定时间 ISO */
   bound: string
   via: BindVia
+  /** 绑定时填的 QQ（掩码展示 + HMAC 键，换机/封禁都靠它） */
+  qqMask?: string
+  qqKey?: string
+}
+
+/* --------------------------- QQ 绑定 --------------------------- */
+//
+// 为什么要绑 QQ：设备码只认机器，用户换个手机就换了个身份；
+// 绑一个必填的 QQ 号之后，「这个人是谁 / 封哪个人」才有抓手。
+// 公开的名单文件里只放掩码 + HMAC，不放原号。
+
+/** 只留数字 */
+export const normalizeQQ = (raw: unknown) => String(raw ?? '').replace(/[^0-9]/g, '')
+
+/** 5~12 位、不以 0 开头（老号 5~10 位，新号 11~12 位） */
+export const isValidQQ = (qq: string) => /^[1-9][0-9]{4,11}$/.test(String(qq ?? ''))
+
+/** 展示用掩码：1234***89 */
+export const maskQQ = (qq: string): string => {
+  const text = normalizeQQ(qq)
+  if (text.length <= 4) return text.replace(/\d(?=\d)/g, '*')
+  if (text.length <= 6) return text.slice(0, 1) + '***' + text.slice(-2)
+  return text.slice(0, 3) + '***' + text.slice(-2)
 }
 
 export const DAY_MS = 86400000
@@ -121,7 +148,14 @@ export const parseWhitelist = (text: string): { updatedAt: number, devices: Whit
       const entry = item as { k?: unknown, exp?: unknown, at?: unknown }
       const key = normalizeCode(asString(entry.k)).toLowerCase()
       if (key.length !== 64) continue
-      devices.push({ k: key, exp: asExp(entry.exp), at: asString(entry.at) || undefined })
+      const qk = normalizeCode(asString((entry as { qk?: unknown }).qk)).toLowerCase()
+      devices.push({
+        k: key,
+        exp: asExp(entry.exp),
+        at: asString(entry.at) || undefined,
+        qq: asString((entry as { qq?: unknown }).qq) || undefined,
+        qk: qk.length === 64 ? qk : undefined,
+      })
     }
     const parsed = Date.parse(asString(data.updatedAt))
     return { updatedAt: Number.isNaN(parsed) ? 0 : parsed, devices }
@@ -130,13 +164,19 @@ export const parseWhitelist = (text: string): { updatedAt: number, devices: Whit
   }
 }
 
-export const parseBlacklist = (text: string): { updatedAt: number, keys: string[] } | null => {
+export const parseBlacklist = (text: string): { updatedAt: number, keys: string[], qkeys: string[] } | null => {
   try {
-    const data = JSON.parse(String(text ?? '')) as { updatedAt?: unknown, keys?: unknown }
-    if (!Array.isArray(data.keys)) return null
-    const keys = data.keys.map(item => normalizeCode(asString(item)).toLowerCase()).filter(key => key.length === 64)
+    const data = JSON.parse(String(text ?? '')) as { updatedAt?: unknown, keys?: unknown, qkeys?: unknown }
+    const toKeys = (value: unknown) => Array.isArray(value)
+      ? value.map(item => normalizeCode(asString(item)).toLowerCase()).filter(key => key.length === 64)
+      : []
+    if (!Array.isArray(data.keys) && !Array.isArray(data.qkeys)) return null
     const parsed = Date.parse(asString(data.updatedAt))
-    return { updatedAt: Number.isNaN(parsed) ? 0 : parsed, keys }
+    return {
+      updatedAt: Number.isNaN(parsed) ? 0 : parsed,
+      keys: toKeys(data.keys),
+      qkeys: toKeys(data.qkeys),
+    }
   } catch {
     return null
   }
@@ -160,6 +200,7 @@ export const decodeToken = (raw: string): AuthzToken | null => {
     if (key.length !== 64) return null
     const code = normalizeCode(asString(data.code))
     if (code.length < 8) return null
+    const qqKey = normalizeCode(asString((data as { qqKey?: unknown }).qqKey)).toLowerCase()
     return {
       v: 1,
       k: key,
@@ -167,6 +208,8 @@ export const decodeToken = (raw: string): AuthzToken | null => {
       code,
       bound: asString(data.bound),
       via: (data.via === 'migration' || data.via === 'offline') ? data.via : 'whitelist',
+      qqMask: asString((data as { qqMask?: unknown }).qqMask) || undefined,
+      qqKey: qqKey.length === 64 ? qqKey : undefined,
     }
   } catch {
     return null
@@ -191,6 +234,8 @@ export interface EvaluateInput {
   cloudFresh: boolean
   /** 本机条目是否在黑名单里 */
   banned: boolean
+  /** 绑定的 QQ 是否在黑名单里（换设备也要拦） */
+  qqBanned?: boolean
   /** 系统时间被调回 */
   clockSkew: boolean
 }
@@ -216,6 +261,7 @@ const result = (status: LicenseStatus, message: string, exp: string | null = nul
 export const evaluate = (input: EvaluateInput, now = Date.now()): EvaluateResult => {
   if (!input.nativeOk) return result('error', '授权模块自检失败，请更新到最新版本', null, now)
   if (input.banned) return result('banned', '本机授权已被封禁，请联系管理员', null, now)
+  if (input.qqBanned) return result('banned', '绑定的 QQ 已被封禁，换设备也无法使用', null, now)
   if (input.clockSkew) return result('tampered', '检测到系统时间被调回，请校准时间后重试', null, now)
   if (!input.biometricOk) return result('no_biometric', input.biometricMessage || '本机没有可用的指纹，请先在系统设置里录入', null, now)
 

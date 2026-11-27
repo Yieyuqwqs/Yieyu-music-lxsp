@@ -4,6 +4,8 @@ import { Alert, Modal, ScrollView, TouchableOpacity, View, StyleSheet } from 're
 import Text from '@/components/common/Text'
 import Button from '@/components/common/Button'
 import { useLicenseInfo, isProInfo, vipStatusText } from '@/store/license/hook'
+import { isValidQQ, normalizeQQ } from '@/core/authz/protocol'
+import Input from '@/components/common/Input'
 import {
   bindByWhitelist, clearLocalLicense, exportMigrationCode, getDeviceCode, lockNow, refreshAuthorization,
   unlockWithFingerprint,
@@ -22,6 +24,7 @@ const PanelContent = ({ onClose }: Omit<Props, 'visible'>) => {
   const pro = isProInfo(info)
   const [busy, setBusy] = useState(false)
   const [migration, setMigration] = useState('')
+  const [qq, setQQ] = useState('')
 
   useEffect(() => { void getDeviceCode() }, [])
 
@@ -56,7 +59,14 @@ const PanelContent = ({ onClose }: Omit<Props, 'visible'>) => {
   }, [busy])
 
   const handleVerify = useCallback(() => { void exec(unlockWithFingerprint) }, [exec])
-  const handleBind = useCallback(() => { void exec(bindByWhitelist) }, [exec])
+  const handleBind = useCallback(() => {
+    const value = normalizeQQ(qq)
+    if (!isValidQQ(value)) {
+      Alert.alert('请填写 QQ', '需要填一个 QQ 号（5~12 位数字），管理员按 QQ 认人/封禁。')
+      return
+    }
+    void exec(async() => bindByWhitelist(value))
+  }, [exec, qq])
   const handleRefresh = useCallback(() => { void exec(refreshAuthorization) }, [exec])
 
   const handleExport = useCallback(() => {
@@ -124,9 +134,25 @@ const PanelContent = ({ onClose }: Omit<Props, 'visible'>) => {
           <Text style={styles.hint}>
             已解锁：{pro ? '是' : '否'} · 云名单：{info.cloudOnline ? '已同步' : '用缓存'} · 指纹：{info.biometricAvailable ? '可用' : '不可用'}
           </Text>
+          <Text style={styles.hint}>绑定 QQ：{info.boundQQ || '未绑定'}</Text>
         </View>
 
         <View style={styles.block}>
+          {info.status === 'ready' && !info.boundQQ
+            ? (
+              <>
+                <Text style={styles.label}>QQ 号（必填）</Text>
+                <Input
+                  style={styles.input}
+                  value={qq}
+                  onChangeText={setQQ}
+                  placeholder="输入 QQ 号，例如 12345678"
+                  keyboardType="number-pad"
+                  autoCorrect={false}
+                />
+              </>
+            )
+            : null}
           <Button style={styles.btnPrimary} onPress={primary.onPress}>
             <Text color="#fff">{primary.label}</Text>
           </Button>

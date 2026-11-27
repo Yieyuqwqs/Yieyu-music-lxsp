@@ -11,7 +11,8 @@ import crypto from 'node:crypto'
 
 import {
   buildOfflineAuthPayload, decodeToken, encodeToken, evaluate, findEntry, fromExpToken, isExpired,
-  normalizeCode, packOfflineAuth, parseBlacklist, parseWhitelist, statusText, toExpToken, unpackOfflineAuth,
+  isValidQQ, maskQQ, normalizeCode, normalizeQQ, packOfflineAuth, parseBlacklist, parseWhitelist,
+  statusText, toExpToken, unpackOfflineAuth,
 } from '@/core/authz/protocol'
 import { rsaVerify } from '@/utils/rsa'
 
@@ -116,6 +117,48 @@ t.suite('云端清单', () => {
   })
   t.test('normalizeCode 只留字母数字', () => {
     t.eq(normalizeCode(' ab12-cd34 ef56_7890 '), 'AB12CD34EF567890')
+  })
+})
+
+// ------------------------------------------------------------------ 4. QQ 绑定
+
+t.suite('QQ 绑定', () => {
+  t.test('只保留数字 + 合法性', () => {
+    t.eq(normalizeQQ(' 123-456 78'), '12345678')
+    t.eq(isValidQQ('12345678'), true)
+    t.eq(isValidQQ('1234'), false, '太短')
+    t.eq(isValidQQ('0123456789'), false, '0 开头（不是合法 QQ）')
+    t.eq(isValidQQ('1234567890123'), false, '太长')
+  })
+  t.test('掩码不泄露完整号', () => {
+    t.eq(maskQQ('123456789'), '123***89')
+    t.ok(!maskQQ('123456789').includes('4567'), '掩码里不该出现中间 4 位')
+    t.eq(maskQQ('12345'), '1***45')
+  })
+  t.test('白名单条目带 qq 掩码 + qk', () => {
+    const entryKey = 'a'.repeat(64)
+    const qk = 'b'.repeat(64)
+    const parsed = parseWhitelist(JSON.stringify({
+      updatedAt: '2026-11-27T00:00:00.000Z',
+      devices: [{ k: entryKey, exp: null, qq: '123***89', qk }],
+    }))
+    t.eq(parsed.devices[0].qq, '123***89')
+    t.eq(parsed.devices[0].qk, qk)
+  })
+  t.test('黑名单支持按 QQ 封禁（qkeys）', () => {
+    const qk = 'c'.repeat(64)
+    const parsed = parseBlacklist(JSON.stringify({ keys: [], qkeys: [qk] }))
+    t.eq(parsed.qkeys, [qk])
+    t.eq(parseBlacklist(JSON.stringify({ keys: [] })).qkeys, [], '老文件没有 qkeys 也要能读')
+  })
+  t.test('令牌带 QQ 时能往返', () => {
+    const token = makeToken({ qqMask: '123***89', qqKey: 'd'.repeat(64) })
+    t.eq(decodeToken(encodeToken(token)).qqMask, '123***89')
+    t.eq(decodeToken(encodeToken(token)).qqKey, 'd'.repeat(64))
+  })
+  t.test('QQ 被封禁 → 换设备也是 banned', () => {
+    t.eq(statusOf({ qqBanned: true }), 'banned')
+    t.eq(statusOf({ qqBanned: true, hasToken: true, token: makeToken() }), 'banned')
   })
 })
 

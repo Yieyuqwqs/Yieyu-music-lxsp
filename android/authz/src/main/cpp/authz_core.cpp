@@ -30,6 +30,7 @@ const char kCrockford[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 const char kDevSalt[] = "yieyu-devcode|v3|";
 const char kKeySalt[] = "yieyu-authz|v1|dev=";
+const char kQqSalt[] = "yieyu-qq|v1|qq=";
 const char kMigrateSalt[] = "yieyu-migrate|v1|";
 const char kMigrateSrcSalt[] = "yieyu-migrate|src|";
 const char kMigratePrefix[] = "YMG1";
@@ -316,6 +317,15 @@ std::string entryKey(const std::string& device_code) {
   return toHex(mac, kHashLen);
 }
 
+std::string qqKey(const std::string& qq) {
+  const std::string normalized = normalizeCode(qq);
+  uint8_t key[kHashLen];
+  secretKey(key);
+  uint8_t mac[kHashLen];
+  hmacSha256String(key, kHashLen, std::string(kQqSalt) + normalized, mac);
+  return toHex(mac, kHashLen);
+}
+
 uint16_t expDayFromMs(int64_t exp_ms) {
   if (exp_ms <= 0) return 0;
   const int64_t day = exp_ms / kDayMs - (kEpochDay - 1);
@@ -487,6 +497,8 @@ std::string selfTest() {
   if (expDayFromMs(0) != 0 || expMsFromDay(0) != 0) return "永久授权编码不匹配";
 
   if (entryKey("ED1D-7DC1-F252-5FBA").size() != 64) return "条目键长度异常";
+  if (qqKey("123456789").size() != 64) return "QQ 条目键长度异常";
+  if (qqKey("123456789") != qqKey(" 123456789 ")) return "QQ 条目键未归一化";
   if (entryKey("ED1D-7DC1-F252-5FBA") != entryKey("ed1d-7dc1-f252-5fba")) return "条目键未归一化";
 
   return std::string();

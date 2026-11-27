@@ -10,6 +10,7 @@ import {
 } from '@/core/license'
 import licenseState from '@/store/license/state'
 import { useLicenseInfo, vipStatusText } from '@/store/license/hook'
+import { isValidQQ, normalizeQQ } from '@/core/authz/protocol'
 import { toast, clipboardWriteText } from '@/utils/tools'
 import { navigations } from '@/navigation'
 
@@ -87,6 +88,7 @@ const enterHome = async() => {
 export default memo(({ componentId }: { componentId: string }) => {
   const info = useLicenseInfo()
   const [code, setCode] = useState('')
+  const [qq, setQQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const autoTried = useRef(false)
@@ -129,6 +131,16 @@ export default memo(({ componentId }: { componentId: string }) => {
     if (licenseState.status === 'active') await toHome()
   }, [toHome])
 
+  /** QQ 必填：设备码只认机器，绑了 QQ 才知道这机器是谁的 */
+  const ensureQQ = useCallback((): string | null => {
+    const value = normalizeQQ(qq)
+    if (!isValidQQ(value)) {
+      Alert.alert('请填写 QQ', '需要填一个 QQ 号（5~12 位数字），管理员按 QQ 认人/封禁。')
+      return null
+    }
+    return value
+  }, [qq])
+
   const handleCopy = useCallback(() => {
     if (!info.deviceCode) return
     clipboardWriteText(info.deviceCode)
@@ -141,7 +153,9 @@ export default memo(({ componentId }: { componentId: string }) => {
       return
     }
     if (needBind) {
-      void exec(bindByWhitelist, enterIfActive)
+      const value = ensureQQ()
+      if (!value) return
+      void exec(async() => bindByWhitelist(value), enterIfActive)
       return
     }
     if (status === 'no_biometric') {
@@ -157,19 +171,23 @@ export default memo(({ componentId }: { componentId: string }) => {
       Alert.alert('提示', '请粘贴迁移码或离线授权串')
       return
     }
+    const value = ensureQQ()
+    if (!value) return
     void exec(async() => {
-      const res = await applyAuthString(text)
+      const res = await applyAuthString(text, value)
       if (res.ok) setCode('')
       return res
     }, enterIfActive)
-  }, [code, enterIfActive, exec])
+  }, [code, enterIfActive, ensureQQ, exec])
 
   // 联网后发现自己刚被管理员授权：直接弹指纹（「管理员填完设备码他就能用」）
   useEffect(() => {
     if (status !== 'ready' || autoTried.current) return
+    if (!isValidQQ(normalizeQQ(qq))) return
     autoTried.current = true
-    void exec(bindByWhitelist, enterIfActive)
-  }, [enterIfActive, exec, status])
+    const value = normalizeQQ(qq)
+    void exec(async() => bindByWhitelist(value), enterIfActive)
+  }, [enterIfActive, exec, qq, status])
 
   const primaryLabel = useMemo(() => {
     if (busy) return '处理中…'
@@ -212,6 +230,30 @@ export default memo(({ componentId }: { componentId: string }) => {
           </TouchableOpacity>
           <Text style={{ color: '#5a6270', fontSize: 11, marginTop: 6 }}>
             点击复制 · 硬件派生：重装/清数据不变，换手机才变
+          </Text>
+
+          <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 14 }}>QQ 号（必填 · 管理员按它认人/封禁）</Text>
+          {info.boundQQ
+            ? (
+              <Text style={{ color: '#7ee787', fontSize: 17, fontWeight: '700', letterSpacing: 1.2, marginTop: 6 }}>
+                {info.boundQQ}（已绑定）
+              </Text>
+            )
+            : (
+              <View style={{ backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingHorizontal: 10, marginTop: 6 }}>
+                <Input
+                  value={qq}
+                  onChangeText={setQQ}
+                  placeholder="输入你的 QQ 号，例如 12345678"
+                  placeholderTextColor="#4b5563"
+                  keyboardType="number-pad"
+                  autoCorrect={false}
+                  style={{ color: '#e5e7eb', minHeight: 44, fontSize: 14 }}
+                />
+              </View>
+            )}
+          <Text style={{ color: '#5a6270', fontSize: 11, marginTop: 6 }}>
+            换手机后重新开通也要填同一个 QQ；被封禁的 QQ 换设备同样用不了。
           </Text>
 
           <View style={{ marginTop: 18 }}>

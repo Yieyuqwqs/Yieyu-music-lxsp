@@ -85,6 +85,7 @@ public final class AuthzModule extends ReactContextBaseJavaModule {
 
   private static native String nativeDeviceCode(String seed);
   private static native String nativeEntryKey(String deviceCode);
+  private static native String nativeQqKey(String qq);
   private static native String nativeMigrateExport(String deviceCode, long expMs, long nowSec);
   private static native String nativeMigrateImport(String code, long nowSec);
   private static native String nativeSelfTest();
@@ -155,6 +156,20 @@ public final class AuthzModule extends ReactContextBaseJavaModule {
       promise.resolve(nativeEntryKey(deviceCode == null ? "" : deviceCode));
     } catch (Throwable error) {
       promise.reject("AUTHZ_ENTRY_KEY", message(error));
+    }
+  }
+
+  /** QQ 的条目键：管理端「按 QQ 封禁」和客户端「被封禁检测」都用同一套算法 */
+  @ReactMethod
+  public void getQqKey(String qq, Promise promise) {
+    if (!LOADED) {
+      promise.reject("AUTHZ_NATIVE", LOAD_ERROR);
+      return;
+    }
+    try {
+      promise.resolve(nativeQqKey(qq == null ? "" : qq));
+    } catch (Throwable error) {
+      promise.reject("AUTHZ_QQ_KEY", message(error));
     }
   }
 

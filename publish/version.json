@@ -1,7 +1,11 @@
 {
-  "version": "1.9-Aurora-64",
-  "desc": "Aurora-64 · 修「软件更新」卡死：检查更新全部改走国内可用链路\n\n· 根因：检查更新读的是私有仓库 + raw.githubusercontent.com，国内会一直挂着；fetch 又没有超时，\n  于是界面永远停在「正在检查更新…」，按钮点不动；\n· 新增 utils/ghMirror：同一个地址自动展开「直连 + 反代（gh-proxy.com / ghproxy.net）+ 镜像域名」，\n  并发赛跑、每个请求硬超时（6~8 秒），谁先返回用谁；\n· 版本清单改读公开仓库 Yieyu-Update（contents API 优先，实测国内 ~1 秒）；\n· APK 下载默认拼接国内加速前缀 https://gh-proxy.com/... （实测 1KB 探针 206 / 0.6 秒），\n  失败自动换 ghproxy.net → 镜像域名 → 直连；\n· checkUpdate 加 15 秒总时限 + 防重入：超时也一定落地成「检查更新失败」，按钮可再点；\n· 强制更新也改成 App 内加速下载（原来打开 github.com 下载页，国内多半打不开）；\n· 关于页/隐私协议的仓库链接改到公开仓库（私有仓库链接用户点开是 404）；\n· 新增 tests/gh 镜像候选回归 + tools/update-live-check.mjs（真机网络联调脚本）。\n\n版本 Aurora-64 / versionCode 69",
+  "version": "1.9-Aurora-65",
+  "desc": "Aurora-65 · 授权加「必填 QQ」+ 按 QQ 封禁（换设备也拦）\n\n· 客户端授权页新增必填 QQ 号（5~12 位数字），绑定指纹时一起写进 Keystore 令牌；\n· 白名单条目新增 qq（掩码 123***89）与 qk（QQ 的 HMAC），公开文件里不出现 QQ 明文；\n· 黑名单新增 qkeys：管理端「按 QQ 封禁」→ 换设备、换设备码照样拦，且本地留痕断网也拦；\n· 管理端新增 QQ 输入、「按 QQ 封禁 / 解封」，设备列表直接显示 QQ 掩码；\n· 迁移码/离线授权串绑定新机时同样要求填 QQ，并拒绝「同一个设备码但 QQ 对不上」的情况；\n· 说明：指纹模板无法导出/上传（系统只给通过或不通过），所以「云端指纹校验」改由 QQ 绑定 + 迁移码实现。\n\n版本 Aurora-65 / versionCode 70",
   "history": [
+    {
+      "version": "1.9-Aurora-64",
+      "desc": "Aurora-64 · 修「软件更新」卡死：检查更新全部改走国内可用链路\n\n· 根因：检查更新读的是私有仓库 + raw.githubusercontent.com，国内会一直挂着；fetch 又没有超时，\n  于是界面永远停在「正在检查更新…」，按钮点不动；\n· 新增 utils/ghMirror：同一个地址自动展开「直连 + 反代（gh-proxy.com / ghproxy.net）+ 镜像域名」，\n  并发赛跑、每个请求硬超时（6~8 秒），谁先返回用谁；\n· 版本清单改读公开仓库 Yieyu-Update（contents API 优先，实测国内 ~1 秒）；\n· APK 下载默认拼接国内加速前缀 https://gh-proxy.com/... （实测 1KB 探针 206 / 0.6 秒），\n  失败自动换 ghproxy.net → 镜像域名 → 直连；\n· checkUpdate 加 15 秒总时限 + 防重入：超时也一定落地成「检查更新失败」，按钮可再点；\n· 强制更新也改成 App 内加速下载（原来打开 github.com 下载页，国内多半打不开）；\n· 关于页/隐私协议的仓库链接改到公开仓库（私有仓库链接用户点开是 404）；\n· 新增 tests/gh 镜像候选回归 + tools/update-live-check.mjs（真机网络联调脚本）。\n\n版本 Aurora-64 / versionCode 69"
+    },
     {
       "version": "1.9-Aurora-63",
       "desc": "Aurora-63 · 卡密体系废除，改为「设备码白名单 + 本机强指纹」\n\n· 旧的 16 位卡密（对称校验码，密钥在公开仓库里等于公开）整体作废；\n· 设备码改为硬件派生（ANDROID_ID + 机型 + 包名 → C++ 派生），重装/清数据不变号，换机才变；\n· 管理员在管理端填设备码 → 写云端 whitelist.json（条目是 HMAC 键，公开文件看不到设备码）；\n· 客户端拉到白名单后自动弹指纹，令牌用 Android Keystore 加密（每次使用都要指纹）；\n· 锁屏（ACTION_SCREEN_OFF）立刻清内存令牌，回来必须重新按指纹；\n· 换机：老设备「授权中心 → 导出迁移码」（YMG1，24 小时有效、用一次即失效）或管理员改白名单；\n· 没网救急：管理端用 RSA 私钥签「离线授权串」（YEYA），客户端内置公钥验签；\n· 黑名单改为按设备条目键，命中即锁死并本地留痕；\n· 新增 android/authz 模块（Java 指纹/Keystore + C++ 授权核），新增 tests/authz 协议回归（33 项）。\n\n版本 Aurora-63 / versionCode 68"
@@ -60,5 +64,5 @@
     }
   ],
   "versionCode": 67,
-  "message": "修复「软件更新」卡死：检查更新改走国内可直连的镜像（api.github.com + gh-proxy 反代），下载走加速地址；强制更新也改为 App 内下载。"
+  "message": "授权新增必填 QQ 号：填一次，以后换手机也要填同一个 QQ；被封禁的 QQ 换设备同样无法使用。"
 }

@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { sha256 } from '@/utils/sha256'
 import { rsaSign, rsaVerify } from '@/utils/rsa'
 import authzNative from '@/utils/nativeModules/authz'
-import { buildOfflineAuthPayload, normalizeCode, packOfflineAuth, toExpToken } from '@/core/authz/protocol'
+import { buildOfflineAuthPayload, isValidQQ, maskQQ, normalizeCode, packOfflineAuth, toExpToken } from '@/core/authz/protocol'
 import { AUTHZ_BLACKLIST_FILE, AUTHZ_OWNER, AUTHZ_REPO, AUTHZ_WHITELIST_FILE, AUTHZ_BRANCH } from '@/config/authz'
 import { LICENSE_PUBLIC_KEY } from '@/config/licenseKey'
 // 私钥由 CI 注入（scripts/write-admin-key.js）；仓库里只有 DEV 占位，签出来的串客户端验不过
@@ -73,6 +73,8 @@ interface WhitelistEntry {
   k: string
   exp: string | null
   at?: string
+  qq?: string
+  qk?: string
 }
 
 const maskKey = (key: string) => key.slice(0, 10) + '…' + key.slice(-4)
@@ -96,6 +98,8 @@ const AdminApp = memo(() => {
   const [tokenSaved, setTokenSaved] = useState(false)
   const [devices, setDevices] = useState<WhitelistEntry[]>([])
   const [banned, setBanned] = useState<string[]>([])
+  const [qqInput, setQQInput] = useState('')
+  const [bannedQQ, setBannedQQ] = useState<string[]>([])
   const [listTip, setListTip] = useState('')
 
   // ---------------------------------------------------------------- 登录
@@ -193,6 +197,14 @@ const AdminApp = memo(() => {
     return key
   }, [])
 
+  const qqKeyOf = useCallback(async(qq: string): Promise<string> => {
+    const value = normalizeCode(qq)
+    if (!isValidQQ(value)) throw new Error('QQ 号格式不对（5~12 位数字）')
+    const key = await authzNative.getQqKey(value)
+    if (!key || key.length !== 64) throw new Error('授权核不可用（管理端包里缺 libyieyu_authz.so）')
+    return key
+  }, [])
+
   const refreshLists = useCallback(async() => {
     if (!token) return
     setListTip('正在拉取云端名单…')
@@ -204,7 +216,8 @@ const AdminApp = memo(() => {
       const whiteDevices = Array.isArray(white?.json?.devices) ? white!.json.devices as WhitelistEntry[] : []
       setDevices(whiteDevices.filter(item => item && typeof item.k === 'string'))
       setBanned(Array.isArray(black?.json?.keys) ? black!.json.keys as string[] : [])
-      setListTip(`白名单 ${whiteDevices.length} 台 · 黑名单 ${Array.isArray(black?.json?.keys) ? black!.json.keys.length : 0} 条`)
+      setBannedQQ(Array.isArray(black?.json?.qkeys) ? black!.json.qkeys as string[] : [])
+      setListTip(`白名单 ${whiteDevices.length} 台 · 封禁设备 ${Array.isArray(black?.json?.keys) ? black!.json.keys.length : 0} 条 · 封禁 QQ ${Array.isArray(black?.json?.qkeys) ? black!.json.qkeys.length : 0} 个`)
     } catch (err: any) {
       setListTip('拉取失败：' + String(err?.message ?? err))
     }
@@ -239,11 +252,18 @@ const AdminApp = memo(() => {
         ? (current!.json.devices as WhitelistEntry[]).filter(item => item && item.k !== key)
         : []
       const exp = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 86400000).toISOString() : null
-      list.push({ k: key, exp, at: new Date().toISOString() })
+      const qqValue = normalizeCode(qqInput)
+      const entry: WhitelistEntry = { k: key, exp, at: new Date().toISOString() }
+      if (qqValue) {
+        if (!isValidQQ(qqValue)) throw new Error('QQ 号格式不对（5~12 位数字）')
+        entry.qq = maskQQ(qqValue)
+        entry.qk = await qqKeyOf(qqValue)
+      }
+      list.push(entry)
       await writeFile(WHITELIST_FILE, { version: 1, updatedAt: new Date().toISOString(), devices: list }, current?.sha ?? null,
         `authz: 开通 ${device.slice(0, 9)}…（${effectiveDays > 0 ? effectiveDays + ' 天' : '永久'}）`)
       setDevices(list)
-      setTip(`已开通 ${device} · ${exp ? '至 ' + exp.slice(0, 10) : '永久'} · 条目 ${maskKey(key)}`)
+      setTip(`已开通 ${device} · ${exp ? '至 ' + exp.slice(0, 10) : '永久'} · 条目 ${maskKey(key)}${entry.qq ? ' · QQ ' + entry.qq : ''}`)
       Alert.alert('已开通', '让用户在客户端点「刷新授权状态」，然后录入指纹即可。')
     } catch (err: any) {
       setTip('开通失败：' + String(err?.message ?? err))
@@ -251,7 +271,7 @@ const AdminApp = memo(() => {
     } finally {
       setBusy(false)
     }
-  }, [entryKeyOf, effectiveDays, loadFile, validateInput, writeFile])
+  }, [entryKeyOf, effectiveDays, loadFile, qqInput, qqKeyOf, validateInput, writeFile])
 
   const removeDevice = useCallback(async(code: string) => {
     setBusy(true)
@@ -304,6 +324,45 @@ const AdminApp = memo(() => {
       setBusy(false)
     }
   }, [entryKeyOf, loadFile, writeFile])
+
+  /** 按 QQ 封禁：写 blacklist.qkeys；同时把这个 QQ 对应的设备条目也拉黑 */
+  const banByQQ = useCallback(async(ban: boolean) => {
+    const qqValue = normalizeCode(qqInput)
+    if (!isValidQQ(qqValue)) {
+      Alert.alert('提示', '请先填写要封禁/解封的 QQ 号（5~12 位数字）')
+      return
+    }
+    setBusy(true)
+    setTip(ban ? '正在按 QQ 封禁…' : '正在解封 QQ…')
+    try {
+      const qk = await qqKeyOf(qqValue)
+      const black = await loadFile(BLACKLIST_FILE)
+      const keys: string[] = Array.isArray(black?.json?.keys) ? black!.json.keys as string[] : []
+      const qkeys: string[] = Array.isArray(black?.json?.qkeys) ? black!.json.qkeys as string[] : []
+      // 顺手把这个 QQ 名下的设备条目也封掉（老客户端只认 keys）
+      const white = await loadFile(WHITELIST_FILE)
+      const matchedKeys: string[] = Array.isArray(white?.json?.devices)
+        ? (white!.json.devices as WhitelistEntry[]).filter(item => item && item.qk === qk).map(item => item.k)
+        : []
+      const nextQ = ban
+        ? (qkeys.includes(qk) ? qkeys : [...qkeys, qk])
+        : qkeys.filter(item => item !== qk)
+      const nextK = ban
+        ? [...keys, ...matchedKeys.filter(key => !keys.includes(key))]
+        : keys.filter(key => !matchedKeys.includes(key))
+      await writeFile(BLACKLIST_FILE, { version: 1, updatedAt: new Date().toISOString(), keys: nextK, qkeys: nextQ }, black?.sha ?? null,
+        ban ? `authz: 封禁 QQ ${maskQQ(qqValue)}` : `authz: 解封 QQ ${maskQQ(qqValue)}`)
+      setBanned(nextK)
+      setBannedQQ(nextQ)
+      setTip(ban
+        ? `已封禁 QQ ${maskQQ(qqValue)}（含 ${matchedKeys.length} 台已开通设备）`
+        : `已解封 QQ ${maskQQ(qqValue)}`)
+    } catch (err: any) {
+      setTip('按 QQ 写入黑名单失败：' + String(err?.message ?? err))
+    } finally {
+      setBusy(false)
+    }
+  }, [loadFile, qqInput, qqKeyOf, writeFile])
 
   const handleBan = useCallback(() => {
     const device = validateInput()
@@ -425,6 +484,20 @@ const AdminApp = memo(() => {
         </View>
         <Text style={styles.hint}>让用户在客户端授权页复制设备码发给你（硬件派生，重装不变）</Text>
 
+        <Text style={styles.label}>用户 QQ 号（开通时填 → 以后按 QQ 认人/封禁）</Text>
+        <View style={styles.inputBox}>
+          <TextInput
+            value={qqInput}
+            onChangeText={setQQInput}
+            placeholder="例如 12345678（5~12 位数字）"
+            placeholderTextColor="#5a6270"
+            keyboardType="number-pad"
+            autoCorrect={false}
+            style={styles.input}
+          />
+        </View>
+        <Text style={styles.hint}>公开名单里只存掩码（123***89）和 HMAC，不会把 QQ 明文推到网上</Text>
+
         <Text style={styles.label}>时长选择</Text>
         <View style={styles.chipRow}>
           {VALIDITY_OPTIONS.map(option => {
@@ -522,6 +595,15 @@ const AdminApp = memo(() => {
             </Pressable>
           </View>
 
+          <View style={{ flexDirection: 'row', marginTop: 10 }}>
+            <Pressable onPress={() => { void banByQQ(true) }} style={({ pressed }) => [styles.primaryBtn, { flex: 1, marginRight: 8, marginTop: 0, backgroundColor: '#f85149' }, pressed && styles.pressed]}>
+              <Text style={styles.primaryText}>{busy ? '处理中…' : '按 QQ 封禁（换设备也拦）'}</Text>
+            </Pressable>
+            <Pressable onPress={() => { void banByQQ(false) }} style={({ pressed }) => [styles.unbanBtn, pressed && styles.pressed]}>
+              <Text style={styles.secondaryText}>解封 QQ</Text>
+            </Pressable>
+          </View>
+
           <Pressable onPress={() => { void refreshLists() }} style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}>
             <Text style={styles.secondaryText}>刷新云端名单</Text>
           </Pressable>
@@ -534,6 +616,7 @@ const AdminApp = memo(() => {
               <View style={styles.banListBox}>
                 {devices.slice(-15).reverse().map(item => (
                   <View key={item.k} style={styles.banRow}>
+                    <Text selectable style={styles.banHash}>{item.qq ? item.qq : '未绑QQ'}</Text>
                     <Text selectable style={styles.banHash}>{maskKey(item.k)}</Text>
                     <Text style={styles.banExp}>{item.exp ? item.exp.slice(0, 10) : '永久'}</Text>
                   </View>
@@ -542,7 +625,7 @@ const AdminApp = memo(() => {
               </View>
             )}
 
-          <Text style={styles.label}>黑名单（{banned.length} 条）</Text>
+          <Text style={styles.label}>黑名单（设备 {banned.length} 条 · QQ {bannedQQ.length} 个）</Text>
           {banned.length === 0
             ? <Text style={styles.hint}>暂无封禁</Text>
             : (
