@@ -237,15 +237,17 @@ export default memo(({ componentId }: { componentId: string }) => {
     void exec(async() => bindByWhitelist(value), enterIfActive)
   }, [enterIfActive, exec, qq, status])
 
+  const qqReady = isValidQQ(normalizeQQ(qq))
   const primaryLabel = useMemo(() => {
     if (busy) return '处理中…'
     if (needUnlock) return '按指纹进入'
-    if (needBind) return '绑定本机指纹'
+    // 补绑 QQ 的场景优先说清楚「点这里会做什么」，别只写「绑定本机指纹」
+    if (status === 'bind_qq') return qqReady ? '绑定 QQ 后使用' : '先填写上面的 QQ 号'
+    if (needBind) return qqReady ? '绑定本机指纹' : '先填写上面的 QQ 号'
     if (status === 'review') return '刷新审核结果'
-    if (status === 'bind_qq') return '绑定 QQ 后使用'
     if (status === 'no_biometric') return '重新检查指纹'
     return '刷新授权状态'
-  }, [busy, needBind, needUnlock, status])
+  }, [busy, needBind, needUnlock, qqReady, status])
 
   return (
     <View style={{ flex: 1, backgroundColor: '#08090c' }}>

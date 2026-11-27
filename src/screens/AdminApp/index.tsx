@@ -184,20 +184,36 @@ const AdminApp = memo(() => {
     return { json: JSON.parse(text), sha: data.sha as string }
   }, [token])
 
+  /**
+   * 写云端文件。
+   *
+   * GitHub 的 contents API 要求带上文件的 sha；如果这中间文件被别人（或自己另一次操作）改过，
+   * 就会回 409 "does not match <sha>"。这里遇到 409 就重新读一次 sha 再写，最多 3 轮。
+   */
   const writeFile = useCallback(async(file: string, payload: any, sha: string | null, message: string) => {
     if (!token) throw new Error('请先保存 GitHub Token')
     const content = Buffer.from(JSON.stringify(payload, null, 2) + '\n', 'utf8').toString('base64')
-    const body: any = { message, content, branch: BRANCH }
-    if (sha) body.sha = sha
-    const res = await ghFetch(token, `/repos/${OWNER}/${REPO}/contents/${file}`, {
-      method: 'PUT',
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) {
+
+    let currentSha = sha
+    let lastError = ''
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const body: any = { message, content, branch: BRANCH }
+      if (currentSha) body.sha = currentSha
+      const res = await ghFetch(token, `/repos/${OWNER}/${REPO}/contents/${file}`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      })
+      if (res.ok) return
       const text = await res.text()
-      throw new Error('写入 ' + file + ' 失败：HTTP ' + res.status + ' ' + text.slice(0, 120))
+      lastError = 'HTTP ' + res.status + ' ' + text.slice(0, 120)
+      // 409 = sha 过期；404 = 文件不存在（下次不带 sha 新建）
+      if (res.status !== 409 && res.status !== 404) break
+      const fresh = await loadFile(file).catch(() => null)
+      currentSha = fresh?.sha ?? null
+      setTip(`云端文件刚被改过，正在重试（第 ${attempt}/3 次）…`)
     }
-  }, [token])
+    throw new Error('写入 ' + file + ' 失败：' + lastError)
+  }, [loadFile, token])
 
   const entryKeyOf = useCallback(async(code: string): Promise<string> => {
     const key = await authzNative.getEntryKey(normalizeCode(code))
@@ -261,11 +277,15 @@ const AdminApp = memo(() => {
         : []
       const exp = effectiveDays > 0 ? new Date(Date.now() + effectiveDays * 86400000).toISOString() : null
       const qqValue = normalizeCode(qqInput)
-      const entry: WhitelistEntry = { k: key, exp, at: new Date().toISOString() }
-      if (qqValue) {
-        if (!isValidQQ(qqValue)) throw new Error('QQ 号格式不对（5~12 位数字）')
-        entry.qq = maskQQ(qqValue)
-        entry.qk = await qqKeyOf(qqValue)
+      // 设备码和 QQ 必须成对写入：以后按 QQ 认人/封禁全靠这条记录
+      if (!isValidQQ(qqValue)) throw new Error('请填写用户 QQ 号（5~12 位数字），设备码要和 QQ 一起绑定')
+      const entry: WhitelistEntry = {
+        k: key,
+        exp,
+        at: new Date().toISOString(),
+        qq: maskQQ(qqValue),
+        qk: await qqKeyOf(qqValue),
+        status: 'approved',
       }
       list.push(entry)
       await writeFile(WHITELIST_FILE, { version: 1, updatedAt: new Date().toISOString(), devices: list }, current?.sha ?? null,
@@ -392,6 +412,8 @@ const AdminApp = memo(() => {
       if (!mac || mac.slice(0, 32) !== unpacked.macHex) throw new Error('申请码校验失败（可能被改过）')
       setRequest({ ...unpacked.request, bodyHex: unpacked.bodyHex, macHex: unpacked.macHex })
       setQQInput(unpacked.request.qq)
+      // 申请码里自带设备码：解析后直接回填，后面「通过并开通」就是 QQ + 设备码一起写进去
+      setDeviceCode(unpacked.request.code)
       Alert.alert('申请码校验通过', '确认头像/QQ 无误后选「通过并开通」或「记入待审核」。')
     } catch (err: any) {
       setRequest(null)
