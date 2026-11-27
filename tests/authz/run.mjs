@@ -12,7 +12,7 @@ import crypto from 'node:crypto'
 import {
   buildOfflineAuthPayload, decodeToken, encodeToken, evaluate, findEntry, fromExpToken, isExpired,
   isValidQQ, maskQQ, normalizeCode, normalizeQQ, packOfflineAuth, packRequest, parseBlacklist, parseWhitelist,
-  statusText, toExpToken, unpackOfflineAuth, unpackRequest,
+  statusText, toExpToken, unpackOfflineAuth, unpackRequest, utf8ToHex, hexToUtf8,
 } from '@/core/authz/protocol'
 import { rsaVerify } from '@/utils/rsa'
 
@@ -360,6 +360,22 @@ t.suite('状态机', () => {
     t.eq(isExpired(null, NOW), false)
     t.eq(isExpired('not-a-date', NOW), false)
     t.eq(isExpired(PAST, NOW), true)
+  })
+})
+
+// ------------------------------------------------------------------ 7. UTF-8 / 申请码编码
+
+t.suite('UTF-8 编码（Hermes 没有 TextEncoder，必须纯 JS）', () => {
+  t.test('中文 / emoji 与 Node Buffer 逐字节一致', () => {
+    for (const text of ['abc', '小明', '混合 emoji 😀', '{"qq":"10001","nick":"小明😀"}']) {
+      t.eq(utf8ToHex(text), Buffer.from(text, 'utf8').toString('hex'), '编码不一致: ' + text)
+      t.eq(hexToUtf8(utf8ToHex(text)), text, '往返不一致: ' + text)
+    }
+  })
+  t.test('申请码里的中文昵称能原样往返', () => {
+    const request = { v: 1, qq: '10001', nick: '小明😀', code: '023FE10C10219850', ts: 1764400000 }
+    const unpacked = unpackRequest(packRequest(request, 'ab'.repeat(16)))
+    t.eq(unpacked.request.nick, '小明😀')
   })
 })
 
