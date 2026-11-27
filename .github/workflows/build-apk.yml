@@ -191,15 +191,21 @@ jobs:
               -f content="${CONTENT}" >/dev/null
           fi
           # 回读校验要带重试：PUT 之后立刻 GET 可能读到索引里的旧内容（Aurora-30 就被这个误报咬过）
+          # 软发布时 latestVersion 才是要断言的字段（minSupportedVersion 是故意保留旧值的）
+          if [ "${SOFT_RELEASE:-0}" = "1" ]; then
+            NEEDLE="\"latestVersion\": \"${VERSION}\""
+          else
+            NEEDLE="\"minSupportedVersion\": \"${VERSION}\""
+          fi
           LIVE=""
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             LIVE=$(gh api "repos/${PUBLIC_REPO}/contents/update.json?ref=main" --jq '.content' 2>/dev/null | base64 -d || true)
-            if echo "$LIVE" | grep -q "\"minSupportedVersion\": \"${VERSION}\""; then break; fi
+            if echo "$LIVE" | grep -q "$NEEDLE"; then break; fi
             echo "回读还不是 ${VERSION}（第 ${attempt} 次），5 秒后重试…"
             sleep 5
           done
           echo "$LIVE"
-          if ! echo "$LIVE" | grep -q "\"minSupportedVersion\": \"${VERSION}\""; then
+          if ! echo "$LIVE" | grep -q "$NEEDLE"; then
             echo "::error:: 公库清单回读不是 ${VERSION}，自动发版失败（已重试 10 次）"
             exit 1
           fi
