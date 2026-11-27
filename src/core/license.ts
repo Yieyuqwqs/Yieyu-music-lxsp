@@ -16,7 +16,7 @@ import {
   type AuthzToken, type BindVia, type EvaluateResult, type WhitelistEntry,
   buildOfflineAuthPayload, decodeToken, encodeToken, evaluate, findEntry, fromExpToken,
   isExpired, isUsableStatus, isValidQQ, maskQQ, normalizeCode, packRequest, parseBlacklist, parseWhitelist,
-  unpackOfflineAuth,
+  unpackOfflineAuth, utf8ToHex,
   MIGRATION_PREFIX, daysLeftOf,
 } from './authz/protocol'
 import authzNative from '@/utils/nativeModules/authz'
@@ -531,8 +531,7 @@ export const buildRequestCode = async(qq: string, nickname: string): Promise<{ o
       code: normalizeCode(deviceCode),
       ts: Math.floor(Date.now() / 1000),
     }
-    const bodyHex = Array.from(new TextEncoder().encode(JSON.stringify(request)))
-      .map(byte => byte.toString(16).padStart(2, '0')).join('')
+    const bodyHex = utf8ToHex(JSON.stringify(request))
     const mac = await authzNative.signText(bodyHex)
     const code = packRequest(request, mac)
     return { ok: true, message: '申请码已生成，发给管理员即可', code }

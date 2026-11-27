@@ -131,23 +131,64 @@ export interface AuthzRequest {
   ts: number
 }
 
-const toHex = (text: string): string => {
-  const bytes = new TextEncoder().encode(text)
+/**
+ * 纯 JS 的 Utf-8 编解码 + hex。
+ *
+ * ⚠️ 不许用 TextEncoder / TextDecoder：Hermes 上没有这两个全局对象，
+ * 真机上会直接报 "Property 'TextEncoder' doesn't exist"（Aurora-66 的 bug）。
+ */
+export const utf8ToHex = (text: string): string => {
   let out = ''
-  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0')
+  const source = String(text ?? '')
+  for (let i = 0; i < source.length; i++) {
+    let code = source.charCodeAt(i)
+    // 代理对（emoji 等）合成一个码点
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < source.length) {
+      const low = source.charCodeAt(i + 1)
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        code = 0x10000 + ((code - 0xd800) << 10) + (low - 0xdc00)
+        i++
+      }
+    }
+    const bytes: number[] = []
+    if (code < 0x80) bytes.push(code)
+    else if (code < 0x800) bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f))
+    else if (code < 0x10000) bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+    else bytes.push(0xf0 | (code >> 18), 0x80 | ((code >> 12) & 0x3f), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f))
+    for (const byte of bytes) out += byte.toString(16).padStart(2, '0')
+  }
   return out
 }
 
-const fromHex = (hex: string): string => {
+export const hexToUtf8 = (hex: string): string => {
   const clean = String(hex ?? '').replace(/[^0-9a-fA-F]/g, '')
   if (clean.length % 2 !== 0) return ''
-  const bytes = new Uint8Array(clean.length / 2)
-  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
-  return new TextDecoder().decode(bytes)
+  let out = ''
+  let i = 0
+  while (i < clean.length) {
+    const byte = parseInt(clean.slice(i, i + 2), 16)
+    if (byte < 0x80) { out += String.fromCharCode(byte); i += 2; continue }
+    if (byte >= 0xc0 && byte < 0xe0) {
+      out += String.fromCharCode(((byte & 0x1f) << 6) | (parseInt(clean.slice(i + 2, i + 4), 16) & 0x3f))
+      i += 4
+      continue
+    }
+    if (byte >= 0xe0 && byte < 0xf0) {
+      out += String.fromCharCode(((byte & 0x0f) << 12) | ((parseInt(clean.slice(i + 2, i + 4), 16) & 0x3f) << 6) | (parseInt(clean.slice(i + 4, i + 6), 16) & 0x3f))
+      i += 6
+      continue
+    }
+    const code = ((byte & 0x07) << 18) | ((parseInt(clean.slice(i + 2, i + 4), 16) & 0x3f) << 12) |
+      ((parseInt(clean.slice(i + 4, i + 6), 16) & 0x3f) << 6) | (parseInt(clean.slice(i + 6, i + 8), 16) & 0x3f)
+    const offset = code - 0x10000
+    out += String.fromCharCode(0xd800 + (offset >> 10), 0xdc00 + (offset & 0x3ff))
+    i += 8
+  }
+  return out
 }
 
 export const packRequest = (request: AuthzRequest, macHex: string): string =>
-  `${REQUEST_PREFIX}.${toHex(JSON.stringify(request))}.${String(macHex).slice(0, 32)}`
+  `${REQUEST_PREFIX}.${utf8ToHex(JSON.stringify(request))}.${String(macHex).slice(0, 32)}`
 
 export const unpackRequest = (raw: string): { request: AuthzRequest, macHex: string, bodyHex: string } | null => {
   const text = String(raw ?? '').trim()
@@ -157,7 +198,7 @@ export const unpackRequest = (raw: string): { request: AuthzRequest, macHex: str
   if (!/^[0-9a-fA-F]+$/.test(parts[1]) || parts[1].length % 2 !== 0) return null
   if (!/^[0-9a-fA-F]{32}$/.test(parts[2])) return null
   try {
-    const data = JSON.parse(fromHex(parts[1])) as AuthzRequest
+    const data = JSON.parse(hexToUtf8(parts[1])) as AuthzRequest
     if (!data || data.v !== 1) return null
     const qq = normalizeQQ(data.qq)
     if (!isValidQQ(qq)) return null
