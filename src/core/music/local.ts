@@ -93,7 +93,7 @@ export const getMusicUrl = async({ musicInfo, isRefresh, allowToggleSource = tru
       // saveLyric(musicInfo, data.lyricInfo)
       if (!isFromCache) void saveMusicUrl(targetMusicInfo, targetQuality, url)
 
-      // TODO: save url ?
+      // 已知限制 3（docs/KNOWN-LIMITATIONS.md）：本地条目本身不落直链，下次播放仍要重新解析
       return url
     })
   })

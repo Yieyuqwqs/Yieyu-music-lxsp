@@ -162,11 +162,8 @@ const handlePlayMusic = async(musicInfo: LX.Player.PlayMusic, url: string, time:
       if (time) await TrackPlayer.seekTo(time)
       if (global.lx.restorePlayInfo) {
         await TrackPlayer.pause()
-        // let startupAutoPlay = settingState.setting['player.startupAutoPlay']
+        // 已知限制 2（docs/KNOWN-LIMITATIONS.md）：player.startupAutoPlay 尚未接入恢复播放分支
         global.lx.restorePlayInfo = null
-
-      // TODO startupAutoPlay
-      // if (startupAutoPlay) store.dispatch(playerAction.playMusic())
       } else {
         await TrackPlayer.play()
       }

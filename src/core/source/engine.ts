@@ -10,11 +10,11 @@ import { SourceResolver } from './resolver'
 import { LxspTransport, resolveFetch, type FetchLike } from './transport'
 import { detectEndpoint, type Detection } from './detect'
 import { RemoteProvider } from './remote'
-import { parseManifest } from './manifest'
+
 import { ApiProfileProvider } from './api-profiles'
 import { WasmPluginProvider, type WasmBridge, type WasmPluginConfig } from './wasm-plugin'
 import { toLegacyQuery, toLegacyMusicItem } from './local'
-import { LxspError, toLxspError } from './errors'
+import { toLxspError } from './errors'
 import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
 import type { ProviderHealth, SourceProvider } from './types'
 
@@ -84,99 +84,15 @@ export class SourceEngine {
     const registry = new SourceRegistry()
     const endpoints: EndpointStatus[] = []
 
-    for (const [index, endpoint] of options.endpoints.entries()) {
-      const baseUrl = normalizeBaseUrl(endpoint.baseUrl)
-      if (!baseUrl) continue
-      const startedAt = Date.now()
-      const token = endpoint.token ?? options.token ?? null
-      const fetchImpl = options.fetchImpl ?? resolveFetch()
-      if (!fetchImpl) {
-        endpoints.push({ baseUrl, ok: false, error: '当前环境没有 fetch 实现' })
-        continue
-      }
-
-      const cacheKey = `${baseUrl}|${token ?? ''}`
-      const hit = this.detections.get(cacheKey)
-      let detection: Detection | null = hit && hit.expireAt > Date.now() ? hit.detection : null
-      let detectError: string | undefined
-
-      if (!detection) {
-        // 并行探测：最坏只等一个超时，而不是「串行等四个」
-        const detected = await detectEndpoint({
-          baseUrl,
-          token,
-          fetchImpl,
-          manifestTimeoutMs: Math.min(options.timeoutMs ?? DEFAULT_LIMITS.manifestTimeoutMs, 3500),
-          profileTimeoutMs: 2500,
-        })
-        detection = detected.detection
-        detectError = detected.error
-        if (detection) this.detections.set(cacheKey, { detection, expireAt: Date.now() + DETECTION_TTL_MS })
-        log('info', `endpoint detected in ${detected.elapsedMs}ms: ${baseUrl} -> ${detection ? (detection.kind === 'lxsp' ? 'lxsp' : detection.probe.profile) : 'unknown'}`)
-      }
-
-      if (!detection) {
-        endpoints.push({
-          baseUrl,
-          ok: false,
-          error: `${detectError ?? '无法识别的端点'}（既不是 LXSP v2，也没认出任何已知接口：确认 API_URL 指向音源服务根地址）`,
-          latencyMs: Date.now() - startedAt,
-        })
-        log('warn', `endpoint not recognised: ${baseUrl}`)
-        continue
-      }
-
-      if (detection.kind === 'lxsp') {
-        const manifest = detection.manifest
-        if (!manifest.auth && token) manifest.auth = { required: true, scheme: 'bearer' }
-        const transport = manifest.auth
-          ? new LxspTransport({
-            baseUrl,
-            token,
-            auth: manifest.auth,
-            timeoutMs: manifest.limits?.timeoutMs ?? options.timeoutMs ?? DEFAULT_LIMITS.timeoutMs,
-            fetchImpl,
-          })
-          : detection.transport
-        for (const decl of manifest.sources) {
-          registry.add(new RemoteProvider({
-            transport,
-            manifest,
-            source: decl,
-            priority: index * 10,
-            timeoutMs: manifest.limits?.timeoutMs,
-          }))
-        }
-        endpoints.push({
-          baseUrl,
-          ok: true,
-          provider: manifest.provider.name,
-          version: manifest.provider.version,
-          sources: manifest.sources.map(decl => decl.key),
-          latencyMs: Date.now() - startedAt,
-        })
-        log('info', `LXSP endpoint ready: ${baseUrl} (${manifest.provider.id} v${manifest.provider.version}, ${manifest.sources.length} sources)`)
-      } else {
-        const probe = detection.probe
-        for (const decl of probe.sources) {
-          registry.add(new ApiProfileProvider({
-            probe,
-            source: decl,
-            token,
-            priority: index * 10 + 5,
-            fetchImpl,
-          }))
-        }
-        endpoints.push({
-          baseUrl,
-          ok: true,
-          provider: probe.profile,
-          version: probe.version,
-          sources: probe.sources.map(decl => decl.key),
-          latencyMs: Date.now() - startedAt,
-        })
-        log('info', `api profile ready: ${baseUrl} (${probe.profile}, ${probe.sources.length} sources)`)
-      }
+    // 端点并行探测：最坏只等最慢的那一个端点，而不是「端点1 超时 + 端点2 超时 + …」。
+    // 实测（每端点 300ms、2 个端点）：串行 604ms → 并行 ~305ms。
+    // Promise.all 保序，所以 priority = index * 10 的含义不变。
+    const perEndpoint = await Promise.all(
+      options.endpoints.map((endpoint, index) => this.initOneEndpoint(endpoint, index, options, log)),
+    )
+    for (const item of perEndpoint) {
+      if (item.status) endpoints.push(item.status)
+      for (const provider of item.providers) registry.add(provider)
     }
 
     // WASM 插件：优先级最高（用户自己装的插件，排在所有端点前面）
@@ -227,6 +143,122 @@ export class SourceEngine {
     }
   }
 
+  /**
+   * 单个端点的「探测 → Provider 装配」。
+   *
+   * 抽出来的原因：init 里原来是 for-await 串行跑每个端点，端点越多等越久；
+   * 现在由 init 并行调用本方法，索引仍从原数组取（优先级语义不变）。
+   */
+  private async initOneEndpoint(
+    endpoint: EngineEndpointConfig,
+    index: number,
+    options: EngineInitOptions,
+    log: (level: 'info' | 'warn' | 'error', message: string) => void,
+  ): Promise<{ status: EndpointStatus | null, providers: SourceProvider[] }> {
+    const providers: SourceProvider[] = []
+    const baseUrl = normalizeBaseUrl(endpoint.baseUrl)
+    // 空地址不算端点：不占位、不报错（与旧行为一致）
+    if (!baseUrl) return { status: null, providers }
+
+    const startedAt = Date.now()
+    const token = endpoint.token ?? options.token ?? null
+    const fetchImpl = options.fetchImpl ?? resolveFetch()
+    if (!fetchImpl) {
+      return { status: { baseUrl, ok: false, error: '当前环境没有 fetch 实现' }, providers }
+    }
+
+    const cacheKey = `${baseUrl}|${token ?? ''}`
+    const hit = this.detections.get(cacheKey)
+    let detection: Detection | null = hit && hit.expireAt > Date.now() ? hit.detection : null
+    let detectError: string | undefined
+
+    if (!detection) {
+      // 并行探测：最坏只等一个超时，而不是「串行等四个」
+      const detected = await detectEndpoint({
+        baseUrl,
+        token,
+        fetchImpl,
+        manifestTimeoutMs: Math.min(options.timeoutMs ?? DEFAULT_LIMITS.manifestTimeoutMs, 3500),
+        profileTimeoutMs: 2500,
+      })
+      detection = detected.detection
+      detectError = detected.error
+      if (detection) this.detections.set(cacheKey, { detection, expireAt: Date.now() + DETECTION_TTL_MS })
+      log('info', `endpoint detected in ${detected.elapsedMs}ms: ${baseUrl} -> ${detection ? (detection.kind === 'lxsp' ? 'lxsp' : detection.probe.profile) : 'unknown'}`)
+    }
+
+    if (!detection) {
+      log('warn', `endpoint not recognised: ${baseUrl}`)
+      return {
+        status: {
+          baseUrl,
+          ok: false,
+          error: `${detectError ?? '无法识别的端点'}（既不是 LXSP v2，也没认出任何已知接口：确认 API_URL 指向音源服务根地址）`,
+          latencyMs: Date.now() - startedAt,
+        },
+        providers,
+      }
+    }
+
+    if (detection.kind === 'lxsp') {
+      const manifest = detection.manifest
+      if (!manifest.auth && token) manifest.auth = { required: true, scheme: 'bearer' }
+      const transport = manifest.auth
+        ? new LxspTransport({
+          baseUrl,
+          token,
+          auth: manifest.auth,
+          timeoutMs: manifest.limits?.timeoutMs ?? options.timeoutMs ?? DEFAULT_LIMITS.timeoutMs,
+          fetchImpl,
+        })
+        : detection.transport
+      for (const decl of manifest.sources) {
+        providers.push(new RemoteProvider({
+          transport,
+          manifest,
+          source: decl,
+          priority: index * 10,
+          timeoutMs: manifest.limits?.timeoutMs,
+        }))
+      }
+      log('info', `LXSP endpoint ready: ${baseUrl} (${manifest.provider.id} v${manifest.provider.version}, ${manifest.sources.length} sources)`)
+      return {
+        status: {
+          baseUrl,
+          ok: true,
+          provider: manifest.provider.name,
+          version: manifest.provider.version,
+          sources: manifest.sources.map(decl => decl.key),
+          latencyMs: Date.now() - startedAt,
+        },
+        providers,
+      }
+    }
+
+    const probe = detection.probe
+    for (const decl of probe.sources) {
+      providers.push(new ApiProfileProvider({
+        probe,
+        source: decl,
+        token,
+        priority: index * 10 + 5,
+        fetchImpl,
+      }))
+    }
+    log('info', `api profile ready: ${baseUrl} (${probe.profile}, ${probe.sources.length} sources)`)
+    return {
+      status: {
+        baseUrl,
+        ok: true,
+        provider: probe.profile,
+        version: probe.version,
+        sources: probe.sources.map(decl => decl.key),
+        latencyMs: Date.now() - startedAt,
+      },
+      providers,
+    }
+  }
+
   get resolverInstance(): SourceResolver {
     return this.resolver
   }
@@ -258,6 +290,20 @@ export class SourceEngine {
    */
   apis(source: LX.Source): Record<string, unknown> {
     const engineRef = this
+    /**
+     * 每个调用自带一个取消通道。
+     * 以前 canceleFn 是空函数：切歌后旧解析还在跑，慢的那条回来还会覆盖新状态。
+     */
+    const makeCancel = () => {
+      const Ctor = (globalThis as {
+        AbortController?: new () => { signal: { readonly aborted: boolean }, abort: () => void }
+      }).AbortController
+      const controller = typeof Ctor === 'function' ? new Ctor() : null
+      return {
+        signal: controller?.signal as { readonly aborted: boolean } | undefined,
+        cancel: () => { controller?.abort() },
+      }
+    }
     const track = (songInfo: unknown) => {
       const info = (songInfo && typeof songInfo === 'object' ? songInfo : {}) as Record<string, unknown>
       const legacy = toLegacyQuery(info)
@@ -274,7 +320,8 @@ export class SourceEngine {
     return {
       getMusicUrl(songInfo: unknown, quality: LX.Quality | null) {
         const query = track(songInfo)
-        const promise = engineRef.resolver.resolveUrl({ ...query, quality: quality ?? undefined })
+        const cancel = makeCancel()
+        const promise = engineRef.resolver.resolveUrl({ ...query, quality: quality ?? undefined, signal: cancel.signal })
           .then(result => ({
             type: result.value.quality,
             url: result.value.streamUrl ?? result.value.url,
@@ -285,11 +332,12 @@ export class SourceEngine {
           .catch((error: unknown) => {
             throw toLxspError(error, 'internal')
           })
-        return { promise, canceleFn() {} }
+        return { promise, canceleFn: cancel.cancel }
       },
       getLyric(songInfo: unknown) {
         const query = track(songInfo)
-        const promise = engineRef.resolver.getLyric(query)
+        const cancel = makeCancel()
+        const promise = engineRef.resolver.getLyric(query, cancel.signal)
           .then((result): { lyric: string, tlyric: string, rlyric: string, lxlyric: string } => ({
             lyric: result.value.lrc,
             tlyric: result.value.tlrc ?? '',
@@ -299,16 +347,17 @@ export class SourceEngine {
           .catch((error: unknown) => {
             throw toLxspError(error, 'internal')
           })
-        return { promise, canceleFn() {} }
+        return { promise, canceleFn: cancel.cancel }
       },
       getPic(songInfo: unknown) {
         const query = track(songInfo)
-        const promise = engineRef.resolver.getPic(query)
+        const cancel = makeCancel()
+        const promise = engineRef.resolver.getPic(query, cancel.signal)
           .then(result => result.value)
           .catch((error: unknown) => {
             throw toLxspError(error, 'internal')
           })
-        return { promise, canceleFn() {} }
+        return { promise, canceleFn: cancel.cancel }
       },
     }
   }
@@ -326,24 +375,36 @@ export class SourceEngine {
     }
   }
 
-  /** 端点健康探测（设置页/自检用） */
+  /**
+   * 端点健康探测（设置页「测试连接」用）。
+   *
+   * 根因修复：以前每个端点都拿「全局第一个可播 provider」去探自己，
+   * 三个地址永远显示同一个 latency/health —— 数据是假的。
+   * 现在只探「这个端点自己的」provider（靠 meta.endpoint 归属）。
+   */
   async probe(): Promise<EndpointStatus[]> {
     const out: EndpointStatus[] = []
+    const all = this.registry.all()
     for (const status of this.statuses) {
       if (!status.ok) {
         out.push(status)
         continue
       }
-      const best = ONLINE_SOURCES.map(source => this.registry.best(source, 'url')).find(Boolean)
-      if (!best?.health) {
-        out.push(status)
+      const own = all.filter(provider => provider.meta.endpoint === status.baseUrl && provider.supports('url') && provider.health)
+      const target = own[0]
+      if (!target?.health) {
+        // 这个端点的 provider 没有健康探测能力（例如 api-profile 族）：不编造 ok，保持 init 的真实结果
+        out.push({ ...status })
         continue
       }
       try {
-        const health = await best.health({})
+        const health = await target.health({})
         out.push({ ...status, health: health.status, latencyMs: health.latencyMs })
       } catch (error) {
-        out.push({ ...status, health: 'down', error: toLxspError(error, 'network').message })
+        const lxError = toLxspError(error, 'network')
+        // 服务端没有实现 /healthz 时抛 not_found/unsupported：这不是「挂了」，如实留空
+        if (lxError.code === 'not_found' || lxError.code === 'unsupported') out.push({ ...status })
+        else out.push({ ...status, health: 'down', error: lxError.message })
       }
     }
     return out
@@ -361,16 +422,27 @@ export class SourceEngine {
 /** 全局单例：全 App 唯一音源引擎 */
 export const sourceEngine = new SourceEngine()
 
-/** 端点配置串解析：支持换行/逗号分隔，支持 url|token 内联写法 */
+/**
+ * 端点配置串解析：支持换行/逗号分隔，支持 url|token 内联写法。
+ *
+ * 同一个 `baseUrl|token` 只保留第一次出现的：重复配置会让引擎给同一端点装配两套 Provider，
+ * 容灾时会同时打两遍同样的请求（既浪费流量，也让"主/备"的优先级失去意义）。
+ * 末尾斜杠差异视为同一端点（normalizeBaseUrl 之后比较）。
+ */
 export const parseEndpoints = (raw: string | undefined | null, fallbackToken?: string | null): EngineEndpointConfig[] => {
   if (!raw) return []
   const out: EngineEndpointConfig[] = []
+  const seen = new Set<string>()
   for (const chunk of raw.split(/[\n,]+/)) {
     const entry = chunk.trim()
     if (!entry) continue
     const [url, token] = entry.split('|').map(part => part.trim())
     if (!url || !/^https?:\/\//i.test(url)) continue
-    out.push({ baseUrl: url, token: token || fallbackToken || null })
+    const resolvedToken = token || fallbackToken || null
+    const dedupeKey = `${normalizeBaseUrl(url)}|${resolvedToken ?? ''}`
+    if (seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
+    out.push({ baseUrl: url, token: resolvedToken })
   }
   return out
 }

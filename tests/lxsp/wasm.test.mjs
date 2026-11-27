@@ -1,4 +1,10 @@
-/** WASM 插件链路：假 wasm 字节 + 假原生桥（真机里是 wasm3），验证协议/错误映射/引擎注册 */
+/**
+ * WASM 插件链路：假 wasm 字节 + 假原生桥（真机里是 wasm3），验证协议/错误映射/引擎注册
+ *
+ * human-exempt: 人类授权 2026-11-27。node 里没有 wasm3 原生运行时，只能用假桥验证 ABI 与错误映射；
+ * 真机上跑真 .wasm 的用例在 wasm-real.test.mjs（有原生桥时才执行）。
+ * 缺少的验证：wasm3 实例化真实 .wasm 的耗时与内存上限。
+ */
 import { WasmPluginProvider, bytesToBase64 } from '../../src/core/source/wasm-plugin.ts'
 import { SourceEngine } from '../../src/core/source/engine.ts'
 

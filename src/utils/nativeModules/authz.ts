@@ -10,7 +10,9 @@ export const AUTHZ_SCREEN_OFF_EVENT = 'YieyuAuth:screenOff'
 
 export const isAuthzAvailable = () => !!nativeModule
 
-const call = <T>(name: string, ...args: any[]): Promise<T> => {
+// <T,> 的逗号不是风格问题：.ts 文件在 TS+JSX 解析器下，`<T>(...)` 会被当成 JSX 标签，
+// modules.test.mjs 用同一套解析器，所以这个逗号是「能解析」的必要条件。
+const call = <T,>(name: string, ...args: any[]): Promise<T> => {
   if (!nativeModule) return Promise.reject(new Error('授权模块未加载（可能是系统版本过低或安装包损坏）'))
   const method = nativeModule[name]
   if (typeof method !== 'function') return Promise.reject(new Error(`授权模块缺少方法 ${name}`))

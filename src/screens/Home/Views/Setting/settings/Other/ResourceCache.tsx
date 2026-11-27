@@ -27,8 +27,7 @@ export default memo(() => {
     return acc
   }, { count: 0, size: 0 })
   // const setting = useGetter('common', 'setting')
-  // TODO clear list cache
-  // const clearCache = useDispatch('list', 'clearCache')
+  // 已知限制 6（docs/KNOWN-LIMITATIONS.md）：这里只有"看大小"，清理入口还没接
 
   const handleGetAppCacheSize = () => {
     void Promise.all([getAppCacheSize(), getCacheSize()]).then(([size, size2]) => {

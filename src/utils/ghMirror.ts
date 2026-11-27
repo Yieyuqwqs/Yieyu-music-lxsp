@@ -111,7 +111,8 @@ export const ghFetchOnce = async(url: string, options: GhFetchOptions = {}): Pro
   }
 }
 
-const firstResolved = <T>(tasks: Array<Promise<T>>): Promise<T> => new Promise((resolve, reject) => {
+// <T,> 的逗号见 core/license.ts 同名说明（TS+JSX 解析歧义）
+const firstResolved = <T,>(tasks: Array<Promise<T>>): Promise<T> => new Promise((resolve, reject) => {
   if (tasks.length === 0) { reject(new Error('没有可用的地址')); return }
   let pending = tasks.length
   let lastError: any = new Error('没有可用的地址')

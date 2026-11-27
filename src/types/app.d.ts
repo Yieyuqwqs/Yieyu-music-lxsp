@@ -69,7 +69,9 @@ declare global {
 
   var Buffer: typeof _Buffer
 
-  module NodeJS {
+  // `module X {}` 不是合法 TS（只允许字符串字面量形式的 declare module）；
+  // 全局类型扩充的正确写法是 namespace，babel 的 TS 解析器同样只认 namespace。
+  namespace NodeJS {
     interface ProcessVersions {
       app: string
     }

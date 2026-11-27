@@ -1,4 +1,10 @@
-/** 解析流水线：换源 / 降档 / 错误策略 / 并发合并 / 健康度 */
+/**
+ * 解析流水线：换源 / 降档 / 错误策略 / 并发合并 / 健康度
+ *
+ * human-exempt: 人类授权 2026-11-27。本文件验证的是「决策逻辑」（哪路胜出、降档几次、冷却多久），
+ * fakeProvider 只提供可控延迟与错误码，不发真实请求；真实直链/真实字节由 live.test.mjs 覆盖。
+ * 缺少的验证：真实端点的降档阶梯与上游限流表现。
+ */
 import { SourceRegistry } from '../../src/core/source/registry.ts'
 import { SourceResolver } from '../../src/core/source/resolver.ts'
 import { LxspError } from '../../src/core/source/errors.ts'

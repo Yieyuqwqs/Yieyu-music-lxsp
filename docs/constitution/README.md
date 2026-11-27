@@ -1,6 +1,7 @@
 # 宪法 · 总表
 
-十条铁律，逐条拆成独立文件。任何代码改动都必须通过这十条；违反任一条 = 交付不合格。
+十三条铁律，逐条拆成独立文件。任何代码改动都必须通过这十三条；违反任一条 = 交付不合格。
+> 2026-11-27：原第十四条（禁止修改宪法/审计脚本/CI）经人类授权**删除并替换**为「脚本可以改，但让它变绿不算证据」。
 
 | # | 条款 | 一句话 | 文件 | 强制方式 |
 |---|---|---|---|---|
@@ -17,16 +18,16 @@
 | 11 | 严禁温室测试 | Mock 不算通过；要真链路/真数据/真日志 | [11-no-greenhouse-testing.md](./11-no-greenhouse-testing.md) | live.test.mjs + 豁免标注 |
 | 12 | 禁止把锅甩给人类 | 不许要求用户验证；每轮自带验证输出 | [12-no-blame-shifting.md](./12-no-blame-shifting.md) | self-verify.sh + audit |
 | 13 | 自检条款 | 前十二条任一触犯即交付失败 | [13-self-audit.md](./13-self-audit.md) | constitution-audit.mjs |
-| 14 | 禁改规则/脚本/CI | 改来变绿＝作弊，最高死刑 | [14-no-self-modifying-rules.md](./14-no-self-modifying-rules.md) | 人工审查（本条禁止自改） |
+| 14 | 脚本可改，但变绿不算证据 | 允许修 CI/脚本；禁止放宽断言、假 SKIP | [14-tests-must-be-real.md](./14-tests-must-be-real.md) | constitution-audit.mjs + 改动清单 |
 
 ## 执行顺序（每次改动）
 
 1. 读总表，确认本次改动触及哪几条
 2. **先发改动清单**（第九条），标注每处 `if`/`try`/常量的性质
-3. 写代码 → 跑 `npm run test:lxsp`（102 项）
+3. 写代码 → 跑 `node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs`（当前 66 项，CI 每次跑）
 4. 跑分支审计 `node tools/if-audit.mjs`，硬违规必须 0
 5. 附延迟表（第五条），分清实测/理论
-6. 推送并触发构建
+6. 推送触发 CI（`.github/workflows/ci.yml`：三套测试 + 审计 + 自检）
 
 ## 判定失败的情形
 

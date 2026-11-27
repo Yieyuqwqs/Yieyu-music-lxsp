@@ -14,9 +14,22 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const CANDIDATES = ['.ts', '.tsx', '.js', '/index.ts', '/index.js']
 
 // ---------- 1. 解析 ----------
+/** 需要替换成桩的裸模块 / 特殊模块（理由写在右侧注释，不允许无理由加） */
+const STUBS = {
+  // 真实 react-native 在 node 里无法加载；桩里带一个内存版 YieyuCore（kv 语义与 C++ 一致）
+  'react-native': './stubs/react-native.mjs',
+  // 真实实现依赖 Android SharedPreferences / SQLite 桥
+  '@react-native-async-storage/async-storage': './stubs/async-storage.mjs',
+  // 真实实现会落盘到 RN 文件系统，node 下没有该语义
+  '@/utils/log': './stubs/log.mjs',
+}
+
 export async function resolve(specifier, context, next) {
   if (specifier === 'react-native' || specifier.startsWith('react-native/')) {
     return next(new URL('./stubs/react-native.mjs', import.meta.url).href, context)
+  }
+  if (STUBS[specifier]) {
+    return next(new URL(STUBS[specifier], import.meta.url).href, context)
   }
   if (specifier.startsWith('@/')) {
     const root = new URL('../../src/', import.meta.url)

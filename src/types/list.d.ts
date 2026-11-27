@@ -26,7 +26,7 @@ declare namespace LX {
       id: 'temp'
       name: '临时列表'
       // list: LX.Music.MusicInfo[]
-      // TODO: save default lists info
+      // 已知限制 7（docs/KNOWN-LIMITATIONS.md）：meta 只在内存里，重启即丢
       meta: {
         id?: string
       }

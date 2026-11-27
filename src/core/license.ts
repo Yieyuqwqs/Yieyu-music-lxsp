@@ -62,7 +62,8 @@ const errText = (error: unknown) => {
   return value?.message || '未知错误'
 }
 
-const withTimeout = <T>(promise: Promise<T>, ms: number, tip = 'timeout'): Promise<T> => new Promise((resolve, reject) => {
+// <T,> 的逗号：TS+JSX 解析器会把 `<T>` 当 JSX 标签，去掉逗号这个文件就解析不了（CI 会红）
+const withTimeout = <T,>(promise: Promise<T>, ms: number, tip = 'timeout'): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { reject(new Error(tip)) }, ms)
   promise.then(
     value => { clearTimeout(timer); resolve(value) },

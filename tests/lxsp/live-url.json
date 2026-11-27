@@ -1,9 +1,8 @@
 {
-  "url": "http://car-bj.kuwo.cn/08d410ff1dd8d9bc795e50bb03c7e800/6b071be7/sp/resource/n2/39/12/2083701040.mp3",
-  "checkedAt": "2026-11-25T17:33:58.821Z",
+  "url": "http://car-bj.kuwo.cn/b795ef56aeba5ea2377d1a5cd380e430/6b099db5/sp/resource/n2/39/12/2083701040.mp3",
+  "checkedAt": "2026-11-27T15:28:28.164Z",
   "status": 206,
-  "bytes": 8192,
+  "bytes": 4096,
   "type": "audio/mpeg",
-  "ranges": "",
-  "length": "bytes 0-8191/9993531"
+  "note": "live.test.mjs 现场刷新（fixture 里的直链已过期）"
 }

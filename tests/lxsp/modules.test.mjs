@@ -23,14 +23,13 @@ const parserModule = (() => {
   return null
 })()
 
-const DIRS = [
-  'src/core/listen-together',
-  'src/utils/nativeModules',
-]
-const EXTRA = [
-  'src/core/player/hooks.ts',
-  'src/screens/Home/Views/Setting/settings/Other/ListenTogether.tsx',
-]
+// 2026-11-27：原来只解析 2 个目录 + 2 个文件（约 30 个），其余 570+ 个 .ts/.tsx 全是死区——
+// 这也是为什么 src/utils/nativeModules/authz.ts 里的 `<T>(..)` 歧义能一直没被发现。
+// 现在全量解析 src，覆盖率和「被改过的文件」自然对齐。
+const DIRS = ['src']
+const EXTRA = []
+/** 低于这个数量说明 walk 出问题了（宁可红，也别静默少覆盖） */
+const MIN_FILES = 550
 
 const walk = (dir, out = []) => {
   let entries = []
@@ -46,10 +45,10 @@ const walk = (dir, out = []) => {
 export default (t) => {
   const files = [...DIRS.flatMap((dir) => walk(dir)), ...EXTRA]
 
-  t.suite('模块解析：所有相关文件都必须能通过语法解析（含 .tsx）', () => {
+  t.suite('模块解析：src 下每个 .ts/.tsx 都必须能通过语法解析（含 .tsx）', () => {
     t.ok(parserModule != null, '必须能加载 @babel/parser（否则这条测试等于没跑）')
     const parser = parserModule
-    t.ok(files.length >= 10, `至少覆盖 10 个文件，实际 ${files.length}`)
+    t.ok(files.length >= MIN_FILES, `至少覆盖 ${MIN_FILES} 个文件，实际 ${files.length}`)
     const failures = []
     for (const rel of files) {
       const code = readFileSync(join(root, rel), 'utf8')

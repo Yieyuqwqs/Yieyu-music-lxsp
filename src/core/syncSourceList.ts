@@ -27,6 +27,5 @@ export default async(targetListInfo: LX.List.UserListInfo) => {
   void overwriteListMusics(targetListInfo.id, list)
   const now = Date.now()
   void setListUpdateTime(targetListInfo.id, now)
-  // TODO
-  // setUpdateTime(targetListInfo.id, dateFormat(now))
+  // 已知限制 5（docs/KNOWN-LIMITATIONS.md）：只落了时间戳，格式化后的时间没有推到界面
 }

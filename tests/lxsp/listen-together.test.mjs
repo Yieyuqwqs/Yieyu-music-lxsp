@@ -1,4 +1,10 @@
-/** 一起听客户端：建房/加入、状态镜像、时钟校准、请求事件、断线重连 */
+/**
+ * 一起听客户端：建房/加入、状态镜像、时钟校准、请求事件、断线重连
+ *
+ * human-exempt: 人类授权 2026-11-27。本文件只验证「客户端状态机在给定消息下的行为」，
+ * 用 fakeFetch/fakeWs 把传输层隔离掉；真实链路（真 broker、真打洞、真播放器）由 live.test.mjs
+ * 与真机验证覆盖，本文件不声称覆盖它。缺少的验证：MQTT broker 实际连通性与 UDP 打洞成功率。
+ */
 import { ListenTogetherClient } from '../../src/core/listen-together/client.ts'
 import { localPlayhead, mergePong, emptyClockSync } from '../../src/core/listen-together/playhead.ts'
 

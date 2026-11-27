@@ -1,5 +1,5 @@
 import { isInitialized, initial as playerInitial, isEmpty, setPause, setPlay, setResource, setStop, initTrackInfo, setVolume } from '@/plugins/player'
-import { callOnPause, callOnPlay, callOnResourceReady, callOnSeek, callOnTrackChange } from './hooks'
+import { callOnPause, callOnPlay, callOnResourceReady, callOnTrackChange } from './hooks'
 import { rememberResolvedUrl } from '@/core/listen-together/resolved-url'
 import { getCueWindow, setCueWindow } from '@/core/player/cueWindow'
 import {
@@ -135,6 +135,19 @@ const getMusicPlayUrl = async(musicInfo: LX.Music.MusicInfo | LX.Download.ListIt
 
     throw err
   })
+}
+
+/**
+ * 淡入定时器（单例）。
+ * 以前每次 play() 都新建一个 setInterval，暂停/连点播放会留下多个同时在改音量，
+ * 表现是音量忽大忽小、暂停后还在往回涨。
+ */
+let fadeInTimer: ReturnType<typeof setInterval> | null = null
+
+const clearFadeInTimer = () => {
+  if (fadeInTimer == null) return
+  clearInterval(fadeInTimer)
+  fadeInTimer = null
 }
 
 export const setMusicUrl = (musicInfo: LX.Music.MusicInfo | LX.Download.ListItem, isRefresh?: boolean) => {
@@ -637,15 +650,18 @@ export const play = () => {
   }
   const targetVolume = settingState.setting['player.volume'] ?? 1
   if (settingState.setting['player.isFadeIn']) {
-    // 音量淡入
+    // 音量淡入：先掐掉上一条，保证同一时刻只有一个淡入在跑
+    clearFadeInTimer()
     void setVolume(0)
     void setPlay()
     let step = 0
     const steps = 6
-    const timer = setInterval(() => {
+    fadeInTimer = setInterval(() => {
       step += 1
       void setVolume(Math.min(targetVolume, targetVolume * (step / steps)))
-      if (step >= steps) clearInterval(timer)
+      if (step >= steps) {
+        clearFadeInTimer()
+      }
     }, 60)
   } else {
     void setVolume(targetVolume)
@@ -657,6 +673,7 @@ export const play = () => {
  * 暂停播放
  */
 export const pause = async() => {
+  clearFadeInTimer()
   await setPause()
   callOnPause()
 }
@@ -665,6 +682,7 @@ export const pause = async() => {
  * 停止播放
  */
 export const stop = async() => {
+  clearFadeInTimer()
   await setStop()
   setTimeout(() => {
     global.app_event.stop()

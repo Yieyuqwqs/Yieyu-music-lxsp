@@ -1,6 +1,67 @@
 {
-  "updatedAt": "2026-11-25",
+  "updatedAt": "2026-11-27",
   "claims": [
+    {
+      "id": "storage-three-layer-consistency",
+      "claim": "单条写入/批量写入/删除三条路径同时更新 内存缓存 + C++ kv + AsyncStorage；删除后读不到旧值（解封不会失效）",
+      "source": "实测",
+      "evidence": [
+        "node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs",
+        "tests/lxsp/storage.test.mjs（5 项不变量，修复前 4 项红）"
+      ]
+    },
+    {
+      "id": "endpoint-detect-race",
+      "claim": "LXSP 秒回时探测立即返回（不等旧接口族超时）；旧接口族三族并行、按优先级裁决",
+      "source": "实测",
+      "evidence": [
+        "node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs",
+        "tests/lxsp/source-engine.test.mjs（探测 <800ms 断言；修复前 1223ms）"
+      ]
+    },
+    {
+      "id": "endpoint-init-parallel",
+      "claim": "多端点初始化并行：3 个端点 304ms（串行实现 904ms）",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/source-engine.test.mjs（三端点 < 单端点×1.8）",
+        "node --import ./tests/lxsp/hook.mjs -e '…SourceEngine.init 延迟探针…'"
+      ]
+    },
+    {
+      "id": "bounded-kv-cache",
+      "claim": "存储内存缓存有界（128 条 / 24MB，LRU），淘汰后仍能读回正确值",
+      "source": "实测",
+      "evidence": [
+        "node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs",
+        "tests/lxsp/kv-cache.test.mjs（4 项：LRU/体积/记账/淘汰后读对）"
+      ]
+    },
+    {
+      "id": "endpoint-config-dedupe",
+      "claim": "同一 baseUrl|token 重复配置只保留一条，避免同一端点装配两套 Provider",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/source-engine.test.mjs（端点配置解析：去重）"
+      ]
+    },
+    {
+      "id": "ci-runs-tests",
+      "claim": "CI 每次跑 lxsp/authz/gh 三套测试 + 分支审计 + 宪法自检",
+      "source": "实测",
+      "evidence": [
+        ".github/workflows/ci.yml",
+        "node tools/constitution-audit.mjs"
+      ]
+    },
+    {
+      "id": "apk-build-not-verified",
+      "claim": "APK 构建与真机播放本轮未验证（本机无 JDK/Android SDK/真机）",
+      "source": "未接上",
+      "evidence": [
+        "node tools/constitution-audit.mjs（第 6 条 N/A）"
+      ]
+    },
     {
       "id": "duration-event-driven",
       "claim": "播放器总时长改由原生 Ready 事件驱动，不再用计时器兜底",

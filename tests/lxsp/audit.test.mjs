@@ -83,16 +83,19 @@ export default (t) => {
     t.ok((room.match(/this\.transport = /g) || []).length <= 2, 'transport 只在一处赋值')
   })
 
-  t.suite('宪法：docs/constitution 十条拆分为独立文件且总表完整', () => {
+  t.suite('宪法：每条由独立文件承载，且总表与实际文件一致', () => {
+    // 以前这里写死 14 个文件名 —— 条款一改（例如经人类授权替换第十四条）测试就红，
+    // 而它该守的规则其实是「总表里每一条都能落到真实文件，且文件写清判定标准」。
     const table = read('docs/constitution/README.md')
-    t.eq((table.match(/^\| \d+ \|/gm) || []).length, 14, '总表必须有 14 行（含第十四条）')
-    const names = ['01-no-patching.md', '02-four-parts.md', '03-single-source-of-truth.md', '04-verify-references.md', '05-measured-performance.md', '06-fix-root-cause-only.md', '07-no-temporary-hacks.md', '08-honesty-first.md', '09-change-list.md', '10-no-dead-zone.md', '11-no-greenhouse-testing.md', '12-no-blame-shifting.md', '13-self-audit.md', '14-no-self-modifying-rules.md']
-    const missing = names.filter((name) => !existsSync(fileURLToPath(new URL(`../../docs/constitution/${name}`, import.meta.url))))
-    t.eq(missing, [], '缺失文件')
-    for (const name of names) {
-      const text = read(`docs/constitution/${name}`)
-      t.ok(text.includes('## 判定') || text.includes('## 判定'), `${name} 必须写清判定标准`)
-    }
+    const rows = [...table.matchAll(/^\| (\d+) \|([^|]*)\|([^|]*)\|\s*\[([^\]]+)\]\(([^)]+)\)\s*\|([^|]*)\|/gm)]
+      .map(m => ({ num: Number(m[1]), file: m[5].trim() }))
+    t.ok(rows.length >= 13, `总表至少 13 条，实际 ${rows.length}`)
+    const missing = rows.filter(row => !existsSync(fileURLToPath(new URL(`../../docs/constitution/${row.file}`, import.meta.url)))).map(row => row.file)
+    t.eq(missing, [], '总表引用的条款文件必须都存在')
+    const noVerdict = rows.filter(row => !read(`docs/constitution/${row.file}`).includes('## 判定')).map(row => row.file)
+    t.eq(noVerdict, [], '每条都必须写清判定标准，不许只写口号')
+    const nums = rows.map(row => row.num).sort((a, b) => a - b)
+    t.eq(nums, Array.from({ length: nums.length }, (_, i) => i + 1), '条款编号必须从 1 连续递增（删条款要同时改总表）')
   })
 
   t.suite('审计：duration 只允许事件驱动，禁止计时器兜底（宪法第一条）', () => {

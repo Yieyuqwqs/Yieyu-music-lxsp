@@ -1,0 +1,46 @@
+name: CI (tests + constitution)
+
+# 为什么加这个工作流：
+#   仓库原来有 5 个 workflow，没有一个执行测试 —— 宪法第二条/第十条/第十三条要求的
+#   「测试每次跑、交付前跑自检」在 CI 层面完全落空。这里把它们接上。
+#   测试是零依赖的（node 直接跑 .ts），所以不需要 npm ci，跑得也快。
+
+on:
+  push:
+    branches: [main, dev, beta]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Test suites
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Node 版本自检（.ts 直跑需要 >= 22.6）
+        run: node -e "const [a,b]=process.versions.node.split('.').map(Number); if(a<22||(a===22&&b<6)) process.exit(1)"
+
+      - name: LXSP / 引擎 / 存储 回归（含真链路）
+        run: node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs
+
+      - name: 授权协议回归
+        run: node --import ./tests/authz/hook.mjs tests/authz/run.mjs
+
+      - name: GitHub 镜像回归
+        run: node --import ./tests/authz/hook.mjs tests/gh/run.mjs
+
+      - name: 条件分支审计
+        run: node tools/if-audit.mjs
+
+      - name: 宪法自检（第十三条）
+        run: node tools/constitution-audit.mjs

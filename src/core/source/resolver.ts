@@ -16,6 +16,7 @@ import { DEFAULT_LIMITS } from './protocol'
 import { noProviderError } from './registry'
 import type { SourceRegistry } from './registry'
 import type {
+  AbortSignalLike,
   LyricResult,
   ResolveAttempt,
   ResolveResult,
@@ -45,6 +46,14 @@ export interface ResolveUrlInput extends TrackQuery {
   quality?: LX.Lxsp.Quality
   /** 允许服务端跨平台兜底 */
   fallback?: boolean
+  /** 取消信号：切歌/重试时上层可以主动放弃这条解析 */
+  signal?: AbortSignalLike
+}
+
+/** 缓存条目：必须记住「是哪个 provider 给的」，否则命中时会错报来源 */
+interface CachedUrl {
+  value: UrlResult
+  providerId: string
 }
 
 export class SourceResolver {
@@ -53,7 +62,7 @@ export class SourceResolver {
   private readonly maxAttempts: number
   private readonly hedgeMs: number
   private readonly urlCacheTtlMs: number
-  private readonly urlCache: TtlCache<string, UrlResult>
+  private readonly urlCache: TtlCache<string, CachedUrl>
   private readonly lyricCache: TtlCache<string, LyricResult>
   private readonly picCache: TtlCache<string, string>
   private readonly urlFlight = new Singleflight<string, UrlResult>()
@@ -68,13 +77,40 @@ export class SourceResolver {
     this.hedgeMs = options.hedgeMs ?? 100
     const now = options.now
     this.urlCacheTtlMs = options.urlCacheTtlMs ?? 0
-    this.urlCache = new TtlCache({ max: 200, ttlMs: this.urlCacheTtlMs, now })
-    this.lyricCache = new TtlCache({ max: 200, ttlMs: options.lyricCacheTtlMs ?? 10 * 60_000, now })
-    this.picCache = new TtlCache({ max: 300, ttlMs: options.picCacheTtlMs ?? 60 * 60_000, now })
+    // 显式写类型参数：babel 不做类型检查，漏了也只有 tsc 才看得见，等于给未来的类型化埋雷
+    this.urlCache = new TtlCache<string, CachedUrl>({ max: 200, ttlMs: this.urlCacheTtlMs, now })
+    this.lyricCache = new TtlCache<string, LyricResult>({ max: 200, ttlMs: options.lyricCacheTtlMs ?? 10 * 60_000, now })
+    this.picCache = new TtlCache<string, string>({ max: 300, ttlMs: options.picCacheTtlMs ?? 60 * 60_000, now })
   }
 
   private trackKey(source: LX.Source, id: string): string {
     return `${source}:${id}`
+  }
+
+  /**
+   * 直链是否已经过期（或即将过期）。
+   *
+   * 根因：url 缓存以前只按 120s TTL 判断，完全不看服务端给的 expiresAt，
+   * 于是"缓存还没到期、直链先过期"时会把死链喂给播放器（表现是点了不出声）。
+   */
+  private isUrlExpired(value: UrlResult, now = Date.now()): boolean {
+    const raw = value.expiresAt
+    if (raw === undefined || raw === null) return false
+    let at = NaN
+    if (typeof raw === 'number') at = raw > 1e12 ? raw : raw * 1000
+    else at = Date.parse(String(raw))
+    if (!Number.isFinite(at)) return false
+    // 留 3 秒余量：播放器 seek/起播本身要时间，卡在边界上等于必失败
+    return at - now <= 3000
+  }
+
+  /** 缓存写入时的 TTL：不越过服务端声明的过期时间 */
+  private ttlFor(value: UrlResult, ttlMs: number, now = Date.now()): number {
+    const raw = value.expiresAt
+    if (raw === undefined || raw === null) return ttlMs
+    const at = typeof raw === 'number' ? (raw > 1e12 ? raw : raw * 1000) : Date.parse(String(raw))
+    if (!Number.isFinite(at)) return ttlMs
+    return Math.max(0, Math.min(ttlMs, at - now))
   }
 
   /**
@@ -108,15 +144,21 @@ export class SourceResolver {
         fallback: input.fallback,
       }
       try {
-        const key = `url|${provider.meta.id}|${input.source}|${input.id}|${quality}`
-        const resolved = await this.urlFlight.run(key, () => provider.resolveUrl(query, { trace: undefined }))
+        const task = () => provider.resolveUrl(query, { trace: undefined, signal: input.signal })
+        // 有取消信号时不合并请求：把一次可取消的请求共享给别的调用方，等于让它们一起被取消
+        const resolved = input.signal
+          ? await task()
+          : await this.urlFlight.run(`url|${provider.meta.id}|${input.source}|${input.id}|${quality}`, task)
         // 降档事实必须在引擎层兜底复核：宁可多报一次降档，也不许静默降级
         const value = input.quality && isDowngrade(input.quality, resolved.quality)
           ? { ...resolved, downgraded: true }
           : resolved
         attempts.push({ providerId: provider.meta.id, source: input.source, quality, ok: true, elapsedMs: Date.now() - startedAt })
         this.hooks.onAttempt?.(attempts[attempts.length - 1]!)
-        if (this.urlCacheTtlMs > 0) this.urlCache.set(cacheKey, value, this.urlCacheTtlMs)
+        if (this.urlCacheTtlMs > 0 && !this.isUrlExpired(value)) {
+          const ttl = this.ttlFor(value, this.urlCacheTtlMs)
+          if (ttl > 0) this.urlCache.set(cacheKey, { value, providerId: provider.meta.id }, ttl)
+        }
         this.registry.markHealthy(provider.meta.id)
         return value
       } catch (rawError) {
@@ -156,10 +198,16 @@ export class SourceResolver {
     const providers = this.registry.providersFor(input.source, 'url')
     if (!providers.length) throw noProviderError(input.source, 'url')
 
+    if (input.signal?.aborted) throw new LxspError('canceled', 'resolve canceled before start', { source: input.source })
+
     const attempts: ResolveAttempt[] = []
     const cacheKey = `${input.source}:${input.id}:${input.quality ?? 'auto'}`
     const cached = this.urlCache.get(cacheKey)
-    if (cached) return { value: cached, provider: providers[0]!.meta, attempts, source: input.source }
+    if (cached) {
+      // 命中缓存也要报「真实来源」：以前一律报 providers[0]，主源挂了却显示主源成功
+      const owner = this.registry.all().find(provider => provider.meta.id === cached.providerId)
+      return { value: cached.value, provider: owner?.meta ?? providers[0]!.meta, attempts, source: input.source }
+    }
 
     const hedgeMs = Math.max(0, this.hedgeMs)
     let nextIndex = 0
@@ -217,7 +265,7 @@ export class SourceResolver {
     })
   }
 
-  async getLyric(query: TrackQuery): Promise<ResolveResult<LyricResult>> {
+  async getLyric(query: TrackQuery, signal?: AbortSignalLike): Promise<ResolveResult<LyricResult>> {
     const providers = this.registry.providersFor(query.source, 'lyric')
     if (!providers.length) throw noProviderError(query.source, 'lyric')
     const key = this.trackKey(query.source, query.id)
@@ -229,7 +277,10 @@ export class SourceResolver {
     for (const provider of providers) {
       const startedAt = Date.now()
       try {
-        const value = await this.lyricFlight.run(`${provider.meta.id}|${key}`, () => provider.lyric(query, {}))
+        const runLyric = () => provider.lyric(query, { signal })
+        const value = signal
+          ? await runLyric()
+          : await this.lyricFlight.run(`${provider.meta.id}|${key}`, runLyric)
         attempts.push({ providerId: provider.meta.id, source: query.source, ok: true, elapsedMs: Date.now() - startedAt })
         this.lyricCache.set(key, value)
         this.registry.markHealthy(provider.meta.id)
@@ -252,7 +303,7 @@ export class SourceResolver {
     throw lastError ?? new LxspError('not_found', `no lyric for ${key}`, { source: query.source })
   }
 
-  async getPic(query: TrackQuery): Promise<ResolveResult<string>> {
+  async getPic(query: TrackQuery, signal?: AbortSignalLike): Promise<ResolveResult<string>> {
     const providers = this.registry.providersFor(query.source, 'pic')
     if (!providers.length) throw noProviderError(query.source, 'pic')
     const key = this.trackKey(query.source, query.id)
@@ -264,7 +315,10 @@ export class SourceResolver {
     for (const provider of providers) {
       const startedAt = Date.now()
       try {
-        const value = await this.picFlight.run(`${provider.meta.id}|${key}`, () => provider.pic(query, {}))
+        const runPic = () => provider.pic(query, { signal })
+        const value = signal
+          ? await runPic()
+          : await this.picFlight.run(`${provider.meta.id}|${key}`, runPic)
         attempts.push({ providerId: provider.meta.id, source: query.source, ok: true, elapsedMs: Date.now() - startedAt })
         this.picCache.set(key, value)
         this.registry.markHealthy(provider.meta.id)

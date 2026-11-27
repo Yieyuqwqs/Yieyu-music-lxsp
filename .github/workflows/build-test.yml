@@ -1,8 +1,10 @@
 name: Run build test
 
+# 原来只在 PR → dev 时跑，而仓库主干是 main —— 也就是说合并进主干的代码从来没经过这层检查。
 on:
   pull_request:
     branches:
+      - main
       - dev
 
 jobs:

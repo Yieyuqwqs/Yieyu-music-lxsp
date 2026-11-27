@@ -121,5 +121,16 @@ export const toQuery = (params: Record<string, string | number | boolean | null 
   return parts.length ? `?${parts.join('&')}` : ''
 }
 
+/**
+ * 旧接口族探测优先级：数字小的更可信。
+ * 放在 protocol 里是刻意的——detect 与 api-profiles 都要用，
+ * 谁也别 import 谁（否则就成了循环依赖）。
+ */
+export const PROFILE_PRIORITY: Readonly<Record<string, number>> = {
+  'lx-source': 0,
+  'api-wwwweb': 1,
+  'api-json': 2,
+}
+
 /** 生成追踪 id：前缀 + 时间戳 + 随机，足够日志对齐 */
 export const createTraceId = (): string => `lx_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`

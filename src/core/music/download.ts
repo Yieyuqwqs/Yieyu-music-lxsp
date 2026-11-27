@@ -40,8 +40,7 @@ export const getPicUrl = async({ musicInfo, isRefresh, listId, onToggleSource = 
   }
 
   return getOnlinePicUrl({ musicInfo: musicInfo.metadata.musicInfo, isRefresh, onToggleSource }).then((url) => {
-    // TODO: when listId required save url (update downloadInfo)
-
+    // 已知限制 4（docs/KNOWN-LIMITATIONS.md）：不回写下载记录的 picUrl，下次仍要重新拉
     return url
   })
 }

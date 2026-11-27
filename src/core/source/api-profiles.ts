@@ -12,7 +12,7 @@
  */
 import { LxspError } from './errors'
 import { sortQualitiesDesc } from './quality'
-import { DEFAULT_LIMITS, normalizeBaseUrl } from './protocol'
+import { DEFAULT_LIMITS, PROFILE_PRIORITY, normalizeBaseUrl } from './protocol'
 import type { FetchLike } from './transport'
 import type { LyricResult, ProviderMeta, RequestContext, SearchResultData, SourceProvider, TrackQuery, UrlQuery, UrlResult } from './types'
 
@@ -76,6 +76,10 @@ const callApi = async(fetchImpl: FetchLike, url: string, options: CallOptions): 
   const abort = controller ? new controller() : null
   const timeoutMs = options.timeoutMs ?? DEFAULT_LIMITS.timeoutMs
   let timer: ReturnType<typeof setTimeout> | null = null
+  // 外部取消必须传导到这条请求上：以前只用 abort.signal，传进来的 options.signal 被丢掉了
+  if (abort && options.signal?.addEventListener) {
+    options.signal.addEventListener('abort', () => abort.abort())
+  }
 
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
@@ -151,42 +155,86 @@ const extractCode = (body: Record<string, unknown> | null): number | undefined =
  * 依次探测三族后端；返回第一个认出的。
  * 探测请求都用「必然失败但能区分路由」的参数，不会消耗真实解析额度。
  */
+/** 探测结果按「优先级 + 短窗口」收敛：不串行等、也不因为快而用错族 */
+const settleByPriority = async <T,>(
+  entries: Array<{ priority: number, run: () => Promise<T | null> }>,
+  graceMs: number,
+): Promise<T | null> => new Promise<T | null>((resolve) => {
+  let pending = entries.length
+  let best: { priority: number, value: T } | null = null
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let done = false
+
+  const finish = () => {
+    if (done) return
+    done = true
+    if (timer) { clearTimeout(timer); timer = null }
+    resolve(best ? best.value : null)
+  }
+
+  const arm = () => {
+    if (!best || timer) return
+    // 最高优先级已经到手，没有任何候选能胜出，立刻收口
+    if (best.priority === 0) { finish(); return }
+    timer = setTimeout(finish, Math.max(0, graceMs))
+  }
+
+  for (const entry of entries) {
+    entry.run().then((value) => {
+      if (value && (!best || entry.priority < best.priority)) {
+        best = { priority: entry.priority, value }
+        arm()
+      }
+    }, () => {}).finally(() => {
+      pending -= 1
+      if (pending === 0) finish()
+    })
+  }
+})
+
+/**
+ * 三族后端并行探测；返回优先级最高的那个。
+ *
+ * 历史：三族是串行 await 的（lx-source → wwwweb → /api/parse → /url），
+ * 每次 2500ms 上限 ⇒ 单端点最坏 10s。现在四路并发，最坏只等最长的一路。
+ */
 export const probeApiProfiles = async(options: {
   baseUrl: string
   token?: string | null
   fetchImpl: FetchLike
   timeoutMs?: number
+  /** 低优先级族先到后，等高优先级族的窗口；默认 200ms */
+  graceMs?: number
 }): Promise<ApiProfileProbe | null> => {
   const baseUrl = normalizeBaseUrl(options.baseUrl)
   const timeoutMs = Math.min(options.timeoutMs ?? 6000, 8000)
   const fetchImpl = options.fetchImpl
   const token = options.token ?? null
+  const graceMs = options.graceMs ?? 200
 
   // 1) lx-source 系：/api/v0/ 会回一份自述 JSON
-  try {
+  const probeLxSource = async(): Promise<ApiProfileProbe | null> => {
     const result = await callApi(fetchImpl, `${baseUrl}/api/v0/`, { timeoutMs, token, auth: 'both' })
     const sourceMap = result.body ? asRecord(result.body.source) : null
-    if (sourceMap) {
-      const sources: ProfileSourceDecl[] = []
-      for (const [key, value] of Object.entries(sourceMap)) {
-        if (!Array.isArray(value) || !value.length) continue
-        if (!ALL_SOURCES.includes(key as LX.Source)) continue
-        const qualities = sortQualitiesDesc(value.map(item => String(item).toLowerCase()).filter(item => item !== 'orig'))
-        if (qualities.length) sources.push({ key: key as LX.Source, qualities })
-      }
-      if (sources.length) {
-        return {
-          profile: 'lx-source',
-          baseUrl,
-          sources,
-          version: result.body && typeof result.body.version === 'string' ? result.body.version as string : undefined,
-        }
-      }
+    if (!sourceMap) return null
+    const sources: ProfileSourceDecl[] = []
+    for (const [key, value] of Object.entries(sourceMap)) {
+      if (!Array.isArray(value) || !value.length) continue
+      if (!ALL_SOURCES.includes(key as LX.Source)) continue
+      const qualities = sortQualitiesDesc(value.map(item => String(item).toLowerCase()).filter(item => item !== 'orig'))
+      if (qualities.length) sources.push({ key: key as LX.Source, qualities })
     }
-  } catch (error) { /* 继续下一族 */ }
+    if (!sources.length) return null
+    return {
+      profile: 'lx-source',
+      baseUrl,
+      sources,
+      version: result.body && typeof result.body.version === 'string' ? result.body.version : undefined,
+    }
+  }
 
   // 2) wwwweb 系：POST /music/url
-  try {
+  const probeWwwweb = async(): Promise<ApiProfileProbe | null> => {
     const result = await callApi(fetchImpl, `${baseUrl}/music/url`, {
       method: 'POST',
       body: { source: 'kw', musicId: '0', quality: '128k' },
@@ -195,29 +243,45 @@ export const probeApiProfiles = async(options: {
       auth: 'both',
     })
     const body = result.body
-    if (body && (extractCode(body) !== undefined || !!extractUrl(body))) {
-      return { profile: 'api-wwwweb', baseUrl, sources: DEFAULT_SOURCES }
-    }
-  } catch (error) { /* 继续下一族 */ }
-
-  // 3) 通用 JSON 接口：/api/parse 或 /url
-  for (const path of ['/api/parse', '/url']) {
-    try {
-      const result = await callApi(fetchImpl, `${baseUrl}${path}`, {
-        method: 'POST',
-        body: { source: 'kw', id: '0', quality: '128k', musicId: '0' },
-        timeoutMs,
-        token,
-        auth: 'both',
-      })
-      const body = result.body
-      if (body && (extractCode(body) !== undefined || !!extractUrl(body))) {
-        return { profile: 'api-json', baseUrl, sources: DEFAULT_SOURCES }
-      }
-    } catch (error) { /* 继续 */ }
+    if (!body) return null
+    if (extractCode(body) === undefined && !extractUrl(body)) return null
+    return { profile: 'api-wwwweb', baseUrl, sources: DEFAULT_SOURCES }
   }
 
-  return null
+  // 3) 通用 JSON 接口：/api/parse 与 /url 并行（谁先给出可识别响应就用谁）
+  const tryJsonPath = async(path: string): Promise<ApiProfileProbe | null> => {
+    const result = await callApi(fetchImpl, `${baseUrl}${path}`, {
+      method: 'POST',
+      body: { source: 'kw', id: '0', quality: '128k', musicId: '0' },
+      timeoutMs,
+      token,
+      auth: 'both',
+    })
+    const body = result.body
+    if (body && (extractCode(body) !== undefined || !!extractUrl(body))) {
+      return { profile: 'api-json', baseUrl, sources: DEFAULT_SOURCES }
+    }
+    return null
+  }
+  const probeJson = async(): Promise<ApiProfileProbe | null> => {
+    return new Promise<ApiProfileProbe | null>((resolve) => {
+      let pending = 2
+      const done = (value: ApiProfileProbe | null) => {
+        pending -= 1
+        if (value) resolve(value)
+        else if (pending === 0) resolve(null)
+      }
+      for (const path of ['/api/parse', '/url']) {
+        tryJsonPath(path).then(done, () => done(null))
+      }
+    })
+  }
+
+  return settleByPriority([
+    { priority: PROFILE_PRIORITY['lx-source']!, run: probeLxSource },
+    { priority: PROFILE_PRIORITY['api-wwwweb']!, run: probeWwwweb },
+    { priority: PROFILE_PRIORITY['api-json']!, run: probeJson },
+  ], graceMs)
 }
 
 export interface ApiProfileProviderOptions {

@@ -25,7 +25,8 @@ export const hideModal = (componentId: string) => {
   void Navigation.dismissOverlay(componentId)
 }
 
-const withDeadline = <T>(promise: Promise<T>, ms: number): Promise<T> => new Promise((resolve, reject) => {
+// <T,> 的逗号见 core/license.ts 同名说明（TS+JSX 解析歧义）
+const withDeadline = <T,>(promise: Promise<T>, ms: number): Promise<T> => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { reject(new Error('检查更新超时')) }, ms)
   promise.then(
     value => { clearTimeout(timer); resolve(value) },

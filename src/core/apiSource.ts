@@ -18,6 +18,7 @@ import {
   type EngineInitResult,
   type EndpointStatus,
 } from './source'
+import { parseWasmPlugins } from './source/wasm-plugin-config'
 
 const ONLINE_SOURCES: readonly LX.Source[] = ['kw', 'kg', 'tx', 'wy', 'mg']
 
@@ -49,17 +50,11 @@ export const initSourceEngine = async(): Promise<EngineInitResult> => {
   const setting = settingState.setting
   const endpoints = parseEndpoints(setting['common.lxspEndpoints'], setting['common.lxspToken'])
 
-  let wasmPlugins: WasmPluginConfig[] = []
-  try {
-    const raw = setting['common.wasmPlugins']
-    if (raw && raw.trim()) {
-      const parsed = JSON.parse(raw)
-      wasmPlugins = (Array.isArray(parsed) ? parsed : [parsed])
-        .filter((item): item is WasmPluginConfig => !!item && typeof item.url === 'string' && typeof item.source === 'string')
-    }
-  } catch (error) {
-    writeLog.warn(`WASM 插件配置不是合法 JSON：${(error as Error).message}`)
-  }
+  // 解析放纯模块里（core/source/wasm-plugin-config.ts）：url 与 builtin 二选一都算合法，
+  // 以前这里要求必须有 url，导致 README 里的 builtin:"api-mode" 写法被静默丢弃。
+  const parsedPlugins = parseWasmPlugins(setting['common.wasmPlugins'])
+  const wasmPlugins: WasmPluginConfig[] = parsedPlugins.plugins
+  if (parsedPlugins.error) writeLog.warn(parsedPlugins.error)
 
   const result = await sourceEngine.init({
     endpoints,

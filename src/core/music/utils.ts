@@ -15,16 +15,33 @@ import { getQualityCandidates } from '@/config/quality'
 import { rememberSource, preferRememberedSource } from '@/core/sourceMemory'
 
 
+/** 旧音源模块（JS 实现）的返回形状：只用到 promise，取消能力在别处 */
+interface LegacyLyricRequest { promise: Promise<LX.Music.LyricInfo> }
+
 const getOtherSourcePromises = new Map()
 export const existTimeExp = /\[\d{1,2}:.*\d{1,4}\]/
-const otherSourceCache = new Map<LX.Music.MusicInfo | LX.Download.ListItem, LX.Music.MusicInfoOnline[]>()
+/**
+ * 「其它源搜索结果」缓存。
+ *
+ * 根因：以前用 MusicInfo 对象本身做 key —— 对象每次都是新引用，
+ * 缓存永远不会命中（白查一遍），而且 Map 强引用会让整首歌的对象图一直不释放。
+ * 现在用 `${source}_${id}` 做 key，并给一个小上限，防止长列表把内存吃满。
+ */
+const OTHER_SOURCE_CACHE_MAX = 20
+const otherSourceCache = new Map<string, LX.Music.MusicInfoOnline[]>()
+const trimOtherSourceCache = () => {
+  while (otherSourceCache.size > OTHER_SOURCE_CACHE_MAX) {
+    const oldest = otherSourceCache.keys().next()
+    if (oldest.done) return
+    otherSourceCache.delete(oldest.value)
+  }
+}
 
 export const getOtherSource = async(musicInfo: LX.Music.MusicInfo | LX.Download.ListItem, isRefresh = false): Promise<LX.Music.MusicInfoOnline[]> => {
   // if (!isRefresh) {
   //   const cachedInfo = await getOtherSourceFromStore(musicInfo.id)
   //   if (cachedInfo.length) return cachedInfo
   // }
-  if (otherSourceCache.has(musicInfo)) return otherSourceCache.get(musicInfo)!
   let key: string
   let searchMusicInfo: {
     name: string
@@ -52,6 +69,8 @@ export const getOtherSource = async(musicInfo: LX.Music.MusicInfo | LX.Download.
       interval: musicInfo.interval ?? '',
     }
   }
+  const cachedOtherSource = otherSourceCache.get(key)
+  if (cachedOtherSource) return cachedOtherSource
   if (getOtherSourcePromises.has(key)) return getOtherSourcePromises.get(key)
 
   const promise = new Promise<LX.Music.MusicInfoOnline[]>((resolve, reject) => {
@@ -60,9 +79,9 @@ export const getOtherSource = async(musicInfo: LX.Music.MusicInfo | LX.Download.
       reject(new Error('find music timeout'))
     }, 12_000)
     findMusic(searchMusicInfo).then((otherSource) => {
-      if (otherSourceCache.size > 10) otherSourceCache.clear()
       const source = otherSource.map(toNewMusicInfo) as LX.Music.MusicInfoOnline[]
-      otherSourceCache.set(musicInfo, source)
+      otherSourceCache.set(key, source)
+      trimOtherSourceCache()
       resolve(source)
     }).catch(reject).finally(() => {
       if (timeout) BackgroundTimer.clearTimeout(timeout)
@@ -436,8 +455,7 @@ export const getOnlineOtherSourceLyricInfo = async({ musicInfos, onToggleSource,
 
   let reqPromise
   try {
-    // TODO: remove any type
-    reqPromise = (musicSdk[musicInfo.source].getLyric(toOldMusicInfo(musicInfo)) as any).promise
+    reqPromise = (musicSdk[musicInfo.source].getLyric(toOldMusicInfo(musicInfo)) as LegacyLyricRequest).promise
   } catch (err: any) {
     reqPromise = Promise.reject(err)
   }
@@ -471,8 +489,7 @@ export const handleGetOnlineLyricInfo = async({ musicInfo, onToggleSource, isRef
   // console.log(musicInfo.source)
   let reqPromise
   try {
-    // TODO: remove any type
-    reqPromise = (musicSdk[musicInfo.source].getLyric(toOldMusicInfo(musicInfo)) as any).promise
+    reqPromise = (musicSdk[musicInfo.source].getLyric(toOldMusicInfo(musicInfo)) as LegacyLyricRequest).promise
   } catch (err) {
     reqPromise = Promise.reject(err)
   }

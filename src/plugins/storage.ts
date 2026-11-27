@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { log } from '@/utils/log'
 import { post as corePost, request as coreRequest, isCoreSupported } from '@/core-bridge'
+import { BoundedKvCache } from './kv-cache'
 
 const partKeyPrefix = '@___PART___'
 const partKeyArrPrefix = '@___PART_A___'
@@ -16,19 +17,40 @@ const limit = 500000
  *   3) AsyncStorage 兜底（迁移期；命中后回写缓存与 C++，实现懒迁移）
  * 全程异步、不阻塞 UI；核心不可用时行为与旧版完全一致。
  */
-const kvCache = new Map<string, string>()
+// 有界缓存：以前是裸 Map（无上限无淘汰），歌单一多就常驻几十 MB
+const kvCache = new BoundedKvCache({ maxEntries: 128, maxBytes: 24 * 1024 * 1024 })
+
+/** 镜像上限：超过这个体积只留在 AsyncStorage（C++ kv 不适合塞巨型 blob） */
+const MIRROR_LIMIT = 8 * 1024 * 1024
+
+/**
+ * 唯一的「写穿透」出口：内存缓存 + C++ 真源必须同时更新。
+ * 之前 saveData / saveDataMultiple 各写各的，批量路径既没缓存也没镜像，
+ * 结果批量存完的列表读回来是上一次的旧值。
+ */
+const cacheStore = (key: string, valueStr: string) => {
+  if (valueStr.length > MIRROR_LIMIT) return
+  kvCache.set(key, valueStr)
+  try {
+    corePost('kv.set', { k: key, v: valueStr })
+  } catch { /* 镜像失败绝不影响主存储 */ }
+}
+
+/** 唯一的「删穿透」出口：三层一起删，否则删完还能从缓存里读到（解封会失效） */
+const cacheDrop = (key: string) => {
+  kvCache.delete(key)
+  try {
+    corePost('kv.remove', { k: key })
+  } catch { /* 镜像失败绝不影响主存储 */ }
+}
 
 /** 命中 AsyncStorage 旧数据时回填：内存缓存 + C++ 真源（懒迁移，不阻塞） */
 const backfill = (key: string, value: string) => {
-  if (value.length > 8 * 1024 * 1024) return
-  kvCache.set(key, value)
-  try {
-    corePost('kv.set', { k: key, v: value })
-  } catch { /* 迁移失败不影响读取 */ }
+  cacheStore(key, value)
 }
 
-const buildData = (key: string, value: any, datas: Array<[string, string]>) => {
-  let valueStr = JSON.stringify(value)
+/** 只负责分片；序列化在上层做一次（大列表 getData 时少一次 JSON.stringify） */
+const buildData = (key: string, valueStr: string, datas: Array<[string, string]>) => {
   if (valueStr.length <= limit) {
     datas.push([key, valueStr])
     return
@@ -64,20 +86,14 @@ const handleGetData = async<T>(partKeys: string): Promise<T> => {
 
 export const saveData = async(key: string, value: any) => {
   const datas: Array<[string, string]> = []
-  buildData(key, value, datas)
+  // 只序列化一次：分片和镜像都用这同一个字符串
+  const raw = JSON.stringify(value)
+  buildData(key, raw, datas)
 
   try {
     await removeData(key)
     await AsyncStorage.multiSet(datas)
-    // M1 双写期：镜像到 C++ KV（>64KB 的整块数据不镜像，留给 M1b 的 SQLite 分块）
-    try {
-      // M1b/M3-3：SQLite 为真源；这里同时更新内存缓存，避免下次还得走一次异步
-      const raw = JSON.stringify(value)
-      if (raw.length <= 8 * 1024 * 1024) {
-        kvCache.set(key, raw)
-        corePost('kv.set', { k: key, v: raw })
-      }
-    } catch { /* 镜像失败绝不影响主存储 */ }
+    cacheStore(key, raw)
   } catch (e: any) {
     // saving error
     log.error('storage error[saveData]:', key, e.message)
@@ -119,9 +135,8 @@ export const getData = async<T = unknown>(key: string): Promise<T | null> => {
 }
 
 export const removeData = async(key: string) => {
-  try {
-    corePost('kv.remove', { k: key })
-  } catch { /* 镜像失败绝不影响主存储 */ }
+  // 先删内存缓存 + C++：读路径优先命中这两层，晚一步就会把删掉的值再读回来
+  cacheDrop(key)
   let value: string | null
   try {
     value = await AsyncStorage.getItem(key)
@@ -205,12 +220,17 @@ export const getDataMultiple = async<T extends readonly string[]>(keys: T) => {
 
 export const saveDataMultiple = async(datas: Array<[string, any]>) => {
   const allData: Array<[string, string]> = []
+  const mirrors: Array<[string, string]> = []
   for (const [key, value] of datas) {
-    buildData(key, value, allData)
+    const raw = JSON.stringify(value)
+    buildData(key, raw, allData)
+    mirrors.push([key, raw])
   }
   try {
     await removeDataMultiple(datas.map(k => k[0]))
     await AsyncStorage.multiSet(allData)
+    // 批量路径同样是写穿透：不镜像的话，下一次 getData 会命中旧缓存
+    for (const [key, raw] of mirrors) cacheStore(key, raw)
   } catch (e: any) {
     // save error
     log.error('storage error[saveDataMultiple]:', e.message)
@@ -221,6 +241,7 @@ export const saveDataMultiple = async(datas: Array<[string, any]>) => {
 
 export const removeDataMultiple = async(keys: string[]) => {
   if (!keys.length) return
+  for (const key of keys) cacheDrop(key)
   const datas = await AsyncStorage.multiGet(keys)
   let allKeys = []
   for (const [key, value] of datas) {
@@ -244,6 +265,7 @@ export const removeDataMultiple = async(keys: string[]) => {
 
 export const clearAll = async() => {
   try {
+    kvCache.clear()
     await AsyncStorage.clear()
   } catch (e: any) {
     // clear error

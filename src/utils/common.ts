@@ -164,7 +164,8 @@ export const similar = (a: string, b: string) => {
  * @param arr
  * @param data
  */
-export const sortInsert = <T>(arr: Array<{ num: number, data: T }>, data: { num: number, data: T }) => {
+// <T,> 的逗号见 core/license.ts 同名说明（TS+JSX 解析歧义）
+export const sortInsert = <T,>(arr: Array<{ num: number, data: T }>, data: { num: number, data: T }) => {
   let key = data.num
   let left = 0
   let right = arr.length - 1
@@ -189,21 +190,21 @@ export const sortInsert = <T>(arr: Array<{ num: number, data: T }>, data: { num:
 }
 
 
-export const arrPush = <T>(list: T[], newList: T[]) => {
+export const arrPush = <T,>(list: T[], newList: T[]) => {
   for (let i = 0; i * 1000 < newList.length; i++) {
     list.push(...newList.slice(i * 1000, (i + 1) * 1000))
   }
   return list
 }
 
-export const arrUnshift = <T>(list: T[], newList: T[]) => {
+export const arrUnshift = <T,>(list: T[], newList: T[]) => {
   for (let i = 0; i * 1000 < newList.length; i++) {
     list.splice(i * 1000, 0, ...newList.slice(i * 1000, (i + 1) * 1000))
   }
   return list
 }
 
-export const arrPushByPosition = <T>(list: T[], newList: T[], position: number) => {
+export const arrPushByPosition = <T,>(list: T[], newList: T[], position: number) => {
   for (let i = 0; i * 1000 < newList.length; i++) {
     list.splice(position + i * 1000, 0, ...newList.slice(i * 1000, (i + 1) * 1000))
   }
@@ -212,7 +213,7 @@ export const arrPushByPosition = <T>(list: T[], newList: T[], position: number) 
 
 
 // https://stackoverflow.com/a/2450976
-export const arrShuffle = <T>(array: T[]) => {
+export const arrShuffle = <T,>(array: T[]) => {
   let currentIndex = array.length
   let randomIndex
 
