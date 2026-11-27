@@ -104,7 +104,7 @@ export default memo(({ componentId }: { componentId: string }) => {
   const status = info.status
   const statusLine = useMemo(() => vipStatusText(info), [info])
   const unlocked = status === 'active'
-  const needBind = status === 'ready'
+  const needBind = status === 'ready' || status === 'bind_qq'
   const needUnlock = status === 'locked'
 
   /** 拉头像/昵称：头像稳定，昵称大概率拿不到（腾讯要登录），拿不到也让管理员人工核对 */
@@ -242,6 +242,7 @@ export default memo(({ componentId }: { componentId: string }) => {
     if (needUnlock) return '按指纹进入'
     if (needBind) return '绑定本机指纹'
     if (status === 'review') return '刷新审核结果'
+    if (status === 'bind_qq') return '绑定 QQ 后使用'
     if (status === 'no_biometric') return '重新检查指纹'
     return '刷新授权状态'
   }, [busy, needBind, needUnlock, status])
@@ -282,6 +283,9 @@ export default memo(({ componentId }: { componentId: string }) => {
           </Text>
 
           <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 14 }}>QQ 号（必填 · 管理员按它认人/封禁）</Text>
+          {status === 'bind_qq'
+            ? <Text style={{ color: '#e3b341', fontSize: 11, marginTop: 4 }}>这台设备的旧授权没有 QQ，必须补绑后才能继续使用</Text>
+            : null}
           {info.boundQQ
             ? (
               <Text style={{ color: '#7ee787', fontSize: 17, fontWeight: '700', letterSpacing: 1.2, marginTop: 6 }}>

@@ -173,6 +173,8 @@ const makeToken = (over = {}) => ({
   code: 'ED1D7DC1F2525FBA',
   bound: '2026-11-27T00:00:00.000Z',
   via: 'whitelist',
+  qqMask: '123***89',
+  qqKey: 'd'.repeat(64),
   ...over,
 })
 
@@ -318,6 +320,15 @@ t.suite('状态机', () => {
   t.test('有令牌且已解锁 → active', () => {
     t.eq(statusOf({ hasToken: true, token: makeToken() }), 'active')
   })
+  t.test('旧授权没有 QQ → bind_qq（强制补绑，不给进主界面）', () => {
+    const legacy = makeToken({ qqMask: undefined, qqKey: undefined })
+    t.eq(statusOf({ hasToken: true, token: legacy }), 'bind_qq')
+    t.eq(statusOf({ hasToken: true, token: legacy, cloudFresh: true, entry: { k: TOKEN_KEY, exp: null } }), 'bind_qq')
+    t.eq(statusText('bind_qq'), '必须绑定 QQ')
+    // 到期优先于强制绑定：先提示续期
+    t.eq(statusOf({ hasToken: true, token: makeToken({ exp: PAST, qqKey: undefined }) }), 'expired')
+  })
+
   t.test('云端把本机删了 → 令牌作废（只在新鲜拉取时）', () => {
     t.eq(statusOf({ hasToken: true, token: makeToken(), cloudFresh: true, entry: null }), 'none')
     t.eq(statusOf({ hasToken: true, token: makeToken(), cloudFresh: false, entry: null }), 'active')

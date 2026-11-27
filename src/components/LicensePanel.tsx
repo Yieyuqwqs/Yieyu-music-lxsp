@@ -106,6 +106,7 @@ const PanelContent = ({ onClose }: Omit<Props, 'visible'>) => {
   const primary = useMemo(() => {
     if (info.status === 'locked') return { label: busy ? '验证中…' : '验证指纹进入', onPress: handleVerify }
     if (info.status === 'ready') return { label: busy ? '绑定中…' : '绑定本机指纹', onPress: handleBind }
+    if (info.status === 'bind_qq') return { label: busy ? '绑定中…' : '绑定 QQ 并验证指纹', onPress: handleBind }
     return { label: busy ? '刷新中…' : '刷新云端授权', onPress: handleRefresh }
   }, [busy, handleBind, handleRefresh, handleVerify, info.status])
 
@@ -138,7 +139,7 @@ const PanelContent = ({ onClose }: Omit<Props, 'visible'>) => {
         </View>
 
         <View style={styles.block}>
-          {info.status === 'ready' && !info.boundQQ
+          {(info.status === 'ready' || info.status === 'bind_qq') && !info.boundQQ
             ? (
               <>
                 <Text style={styles.label}>QQ 号（必填）</Text>

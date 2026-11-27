@@ -11,6 +11,7 @@ export type LicenseStatus =
   | 'none'
   | 'ready'
   | 'locked'
+  | 'bind_qq'
   | 'review'
   | 'active'
   | 'expired'
@@ -384,6 +385,10 @@ export const evaluate = (input: EvaluateInput, now = Date.now()): EvaluateResult
     }
     const effectiveExp = input.cloudFresh && input.entry ? entryExp : tokenExp
     if (isExpired(effectiveExp, now)) return result('expired', '授权已到期，请联系管理员续期', effectiveExp, now)
+    // 强制绑定：Aurora-67 之前绑的授权没有 QQ，必须补绑才能继续用
+    if (input.token != null && !input.token.qqKey) {
+      return result('bind_qq', '旧授权还没绑定 QQ：填写 QQ 并提交申请，绑定后即可正常使用', effectiveExp, now)
+    }
     if (input.token == null) {
       return result('locked', '已绑定本机，验证指纹后进入', effectiveExp, now)
     }
@@ -412,6 +417,7 @@ export const statusText = (status: LicenseStatus): string => {
     case 'none': return '未授权'
     case 'ready': return '待绑定指纹'
     case 'locked': return '待验证指纹'
+    case 'bind_qq': return '必须绑定 QQ'
     case 'review': return '待管理员审核'
     case 'active': return '已授权'
     case 'expired': return '授权已到期'
