@@ -204,7 +204,7 @@ void hmacSha256(const uint8_t* key, size_t key_len, const uint8_t* data, size_t 
   uint8_t innerDigest[kHashLen];
   {
     // sha256(inner || data)
-    uint8_t state[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
+    uint32_t state[8] = {0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u, 0xa54ff53au,
                         0x510e527fu, 0x9b05688cu, 0x1f83d9abu, 0x5be0cd19u};
     sha256Block(inner, state);
     size_t offset = 0;
