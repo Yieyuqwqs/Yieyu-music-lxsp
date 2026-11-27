@@ -1,13 +1,15 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Animated, Easing, ScrollView, TouchableOpacity, View } from 'react-native'
+import { Alert, Animated, Easing, Image, ScrollView, TouchableOpacity, View } from 'react-native'
 
 import Text from '@/components/common/Text'
 import Input from '@/components/common/Input'
 import Button from '@/components/common/Button'
 import ForceUpdateModal from '@/components/ForceUpdateModal'
 import {
-  applyAuthString, bindByWhitelist, getDeviceCode, recheckBiometric, refreshAuthorization, unlockWithFingerprint,
+  applyAuthString, bindByWhitelist, buildRequestCode, getDeviceCode, recheckBiometric, refreshAuthorization,
+  unlockWithFingerprint,
 } from '@/core/license'
+import { avatarUrlOf, lookupQQ, type QQProfile } from '@/utils/qqProfile'
 import licenseState from '@/store/license/state'
 import { useLicenseInfo, vipStatusText } from '@/store/license/hook'
 import { isValidQQ, normalizeQQ } from '@/core/authz/protocol'
@@ -90,6 +92,10 @@ export default memo(({ componentId }: { componentId: string }) => {
   const [code, setCode] = useState('')
   const [qq, setQQ] = useState('')
   const [busy, setBusy] = useState(false)
+  const [profile, setProfile] = useState<QQProfile | null>(null)
+  const [profileBusy, setProfileBusy] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+  const [requestCode, setRequestCode] = useState('')
   const [showImport, setShowImport] = useState(false)
   const autoTried = useRef(false)
 
@@ -100,6 +106,48 @@ export default memo(({ componentId }: { componentId: string }) => {
   const unlocked = status === 'active'
   const needBind = status === 'ready'
   const needUnlock = status === 'locked'
+
+  /** 拉头像/昵称：头像稳定，昵称大概率拿不到（腾讯要登录），拿不到也让管理员人工核对 */
+  const handleLookupQQ = useCallback(() => {
+    const value = normalizeQQ(qq)
+    if (!isValidQQ(value)) {
+      Alert.alert('请填写 QQ', 'QQ 号是 5~12 位数字。')
+      return
+    }
+    setProfileBusy(true)
+    setRequestCode('')
+    setConfirmed(false)
+    void lookupQQ(value)
+      .then(result => {
+        setProfile(result)
+        if (!result.nickname) toast('已取到头像；昵称接口需要腾讯登录态，交给管理员人工审核', 'long')
+      })
+      .catch((error: Error) => {
+        Alert.alert('QQ 资料获取失败', error?.message ?? '网络异常，请稍后重试')
+      })
+      .finally(() => setProfileBusy(false))
+  }, [qq])
+
+  /** 生成申请码（用户发给管理员，管理员在管理端通过后才能真正绑定） */
+  const handleBuildRequest = useCallback(() => {
+    if (!profile) {
+      Alert.alert('提示', '请先核对 QQ 资料')
+      return
+    }
+    if (!confirmed) {
+      Alert.alert('请先确认', '请先确认「这是我的 QQ」。')
+      return
+    }
+    void buildRequestCode(profile.qq, profile.nickname).then(result => {
+      if (!result.ok || !result.code) {
+        Alert.alert('生成失败', result.message)
+        return
+      }
+      setRequestCode(result.code)
+      clipboardWriteText(result.code)
+      toast('申请码已复制，发给管理员即可', 'long')
+    })
+  }, [confirmed, profile])
 
   const toHome = useCallback(async() => {
     await navigations.pushHomeScreen()
@@ -193,6 +241,7 @@ export default memo(({ componentId }: { componentId: string }) => {
     if (busy) return '处理中…'
     if (needUnlock) return '按指纹进入'
     if (needBind) return '绑定本机指纹'
+    if (status === 'review') return '刷新审核结果'
     if (status === 'no_biometric') return '重新检查指纹'
     return '刷新授权状态'
   }, [busy, needBind, needUnlock, status])
@@ -219,7 +268,7 @@ export default memo(({ componentId }: { componentId: string }) => {
           <Text style={{ color: '#8b93a1', fontSize: 12 }}>授权状态</Text>
           <Text style={{ color: unlocked ? '#7ee787' : '#ff8fa3', fontSize: 18, fontWeight: '700', marginTop: 4 }}>{statusLine}</Text>
           {info.message
-            ? <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 8, lineHeight: 18 }}>{info.message}</Text>
+            ? <Text style={{ color: status === 'review' ? '#e3b341' : '#8b93a1', fontSize: 12, marginTop: 8, lineHeight: 18 }}>{info.message}</Text>
             : null}
 
           <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 18 }}>本机设备码（发给管理员）</Text>
@@ -255,6 +304,71 @@ export default memo(({ componentId }: { componentId: string }) => {
           <Text style={{ color: '#5a6270', fontSize: 11, marginTop: 6 }}>
             换手机后重新开通也要填同一个 QQ；被封禁的 QQ 换设备同样用不了。
           </Text>
+
+          {!info.boundQQ
+            ? (
+              <View style={{ marginTop: 12 }}>
+                <Button
+                  onPress={handleLookupQQ}
+                  style={{ backgroundColor: profileBusy ? '#2b303b' : '#3b9cff', borderRadius: 10, paddingVertical: 11, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{profileBusy ? '正在核对该 QQ…' : '核对 QQ 资料（头像）'}</Text>
+                </Button>
+
+                {profile
+                  ? (
+                    <View style={{ marginTop: 12, flexDirection: 'row', alignItems: 'center' }}>
+                      <Image
+                        source={{ uri: profile.avatar || avatarUrlOf(profile.qq) }}
+                        style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#1c1f26' }}
+                      />
+                      <View style={{ flex: 1, marginLeft: 10 }}>
+                        <Text style={{ color: '#e5e7eb', fontSize: 15, fontWeight: '700' }}>{profile.qq}</Text>
+                        <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 2 }}>{profile.nickname || '昵称：自动获取不可用'}</Text>
+                        {profile.note
+                          ? <Text style={{ color: '#e3b341', fontSize: 11, marginTop: 4, lineHeight: 16 }}>{profile.note}</Text>
+                          : null}
+                      </View>
+                    </View>
+                  )
+                  : null}
+
+                {profile
+                  ? (
+                    <>
+                      <TouchableOpacity onPress={() => setConfirmed(v => !v)} style={{ marginTop: 10, flexDirection: 'row', alignItems: 'center' }}>
+                        <View style={{
+                          width: 18, height: 18, borderRadius: 4, borderWidth: 1,
+                          borderColor: confirmed ? '#7ee787' : '#4b5563',
+                          backgroundColor: confirmed ? 'rgba(126,231,135,0.25)' : 'transparent',
+                          alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {confirmed ? <Text style={{ color: '#7ee787', fontSize: 12 }}>✓</Text> : null}
+                        </View>
+                        <Text style={{ color: '#c9d1d9', fontSize: 12, marginLeft: 8 }}>确认这是我的 QQ</Text>
+                      </TouchableOpacity>
+
+                      <Button
+                        onPress={handleBuildRequest}
+                        style={{ backgroundColor: confirmed ? '#ff4d6d' : '#2b303b', borderRadius: 10, paddingVertical: 11, alignItems: 'center', marginTop: 10 }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>生成授权申请码（发给管理员）</Text>
+                      </Button>
+                    </>
+                  )
+                  : null}
+
+                {requestCode
+                  ? (
+                    <TouchableOpacity onPress={() => { clipboardWriteText(requestCode); toast('申请码已复制') }} style={{ marginTop: 10 }}>
+                      <Text selectable style={{ color: '#7ee0ff', fontSize: 11, lineHeight: 16 }}>{requestCode}</Text>
+                      <Text style={{ color: '#5a6270', fontSize: 11, marginTop: 4 }}>点上面的码复制 · 管理员核验头像后点「通过」才算开通</Text>
+                    </TouchableOpacity>
+                  )
+                  : null}
+              </View>
+            )
+            : null}
 
           <View style={{ marginTop: 18 }}>
             <Button

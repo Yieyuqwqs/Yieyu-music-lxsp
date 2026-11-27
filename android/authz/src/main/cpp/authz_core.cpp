@@ -31,6 +31,7 @@ const char kCrockford[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const char kDevSalt[] = "yieyu-devcode|v3|";
 const char kKeySalt[] = "yieyu-authz|v1|dev=";
 const char kQqSalt[] = "yieyu-qq|v1|qq=";
+const char kSignSalt[] = "yieyu-sign|v1|";
 const char kMigrateSalt[] = "yieyu-migrate|v1|";
 const char kMigrateSrcSalt[] = "yieyu-migrate|src|";
 const char kMigratePrefix[] = "YMG1";
@@ -323,6 +324,14 @@ std::string qqKey(const std::string& qq) {
   secretKey(key);
   uint8_t mac[kHashLen];
   hmacSha256String(key, kHashLen, std::string(kQqSalt) + normalized, mac);
+  return toHex(mac, kHashLen);
+}
+
+std::string signText(const std::string& text) {
+  uint8_t key[kHashLen];
+  secretKey(key);
+  uint8_t mac[kHashLen];
+  hmacSha256String(key, kHashLen, std::string(kSignSalt) + text, mac);
   return toHex(mac, kHashLen);
 }
 

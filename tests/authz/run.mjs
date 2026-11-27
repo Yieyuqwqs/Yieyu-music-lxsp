@@ -11,8 +11,8 @@ import crypto from 'node:crypto'
 
 import {
   buildOfflineAuthPayload, decodeToken, encodeToken, evaluate, findEntry, fromExpToken, isExpired,
-  isValidQQ, maskQQ, normalizeCode, normalizeQQ, packOfflineAuth, parseBlacklist, parseWhitelist,
-  statusText, toExpToken, unpackOfflineAuth,
+  isValidQQ, maskQQ, normalizeCode, normalizeQQ, packOfflineAuth, packRequest, parseBlacklist, parseWhitelist,
+  statusText, toExpToken, unpackOfflineAuth, unpackRequest,
 } from '@/core/authz/protocol'
 import { rsaVerify } from '@/utils/rsa'
 
@@ -189,6 +189,48 @@ t.suite('本机令牌', () => {
   })
   t.test('未知 via 收敛为 whitelist', () => {
     t.eq(decodeToken(JSON.stringify(makeToken({ via: 'hacked' }))).via, 'whitelist')
+  })
+})
+
+t.suite('授权申请码', () => {
+  const request = { v: 1, qq: '123456789', nick: '小明', code: 'ED1D7DC1F2525FBA', ts: 1764400000 }
+  const mac = 'ab'.repeat(16)
+
+  t.test('打包/解包往返', () => {
+    const packed = packRequest(request, mac)
+    t.ok(packed.startsWith('YQR1.'), '前缀应该是 YQR1')
+    const unpacked = unpackRequest(packed)
+    t.ok(unpacked, '应当能解开')
+    t.eq(unpacked.request.qq, '123456789')
+    t.eq(unpacked.request.nick, '小明')
+    t.eq(unpacked.request.code, 'ED1D7DC1F2525FBA')
+    t.eq(unpacked.macHex, mac)
+  })
+  t.test('坏码一律拒绝', () => {
+    t.eq(unpackRequest('hello'), null)
+    t.eq(unpackRequest('YQR1.zzzz.' + mac), null, '非 hex')
+    t.eq(unpackRequest('YQR1.' + '00' + '.' + mac), null, 'JSON 解不出来')
+    t.eq(unpackRequest(packRequest({ ...request, qq: '123' }, mac)), null, 'QQ 不合法')
+  })
+})
+
+t.suite('待审核状态', () => {
+  const key = 'a'.repeat(64)
+  t.test('白名单里 status=pending 能被读到', () => {
+    const parsed = parseWhitelist(JSON.stringify({
+      updatedAt: '2026-11-27T00:00:00.000Z',
+      devices: [{ k: key, exp: null, qq: '123***89', qk: 'b'.repeat(64), nick: '小明', status: 'pending' }],
+    }))
+    t.eq(parsed.devices[0].status, 'pending')
+    t.eq(parsed.devices[0].nick, '小明')
+  })
+  t.test('缺省 status 视为已开通（老文件兼容）', () => {
+    const parsed = parseWhitelist(JSON.stringify({ updatedAt: '2026-11-27T00:00:00.000Z', devices: [{ k: key, exp: null }] }))
+    t.eq(parsed.devices[0].status, 'approved')
+  })
+  t.test('pending 条目 → review 状态，不给绑定', () => {
+    t.eq(statusOf({ cloudFresh: true, entry: { k: key, exp: null, status: 'pending' }, entryPending: true }), 'review')
+    t.eq(statusText('review'), '待管理员审核')
   })
 })
 

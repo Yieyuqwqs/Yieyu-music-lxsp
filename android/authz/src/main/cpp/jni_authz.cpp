@@ -41,6 +41,11 @@ Java_cn_toside_music_authz_AuthzModule_nativeEntryKey(JNIEnv* env, jclass, jstri
 }
 
 JNIEXPORT jstring JNICALL
+Java_cn_toside_music_authz_AuthzModule_nativeSignText(JNIEnv* env, jclass, jstring text) {
+  return toJString(env, yieyu::authz::signText(fromJString(env, text)));
+}
+
+JNIEXPORT jstring JNICALL
 Java_cn_toside_music_authz_AuthzModule_nativeQqKey(JNIEnv* env, jclass, jstring qq) {
   return toJString(env, yieyu::authz::qqKey(fromJString(env, qq)));
 }

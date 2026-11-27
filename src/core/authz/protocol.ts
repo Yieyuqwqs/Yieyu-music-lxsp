@@ -11,6 +11,7 @@ export type LicenseStatus =
   | 'none'
   | 'ready'
   | 'locked'
+  | 'review'
   | 'active'
   | 'expired'
   | 'banned'
@@ -29,6 +30,10 @@ export interface WhitelistEntry {
   qq?: string
   /** QQ 的 HMAC 键：按 QQ 封禁/反查都靠它（公开文件里看不到原号） */
   qk?: string
+  /** 昵称（能查到就记，查不到留空，给管理员认人用） */
+  nick?: string
+  /** pending = 用户提交了申请、还没人工审核；缺省/approved = 已开通 */
+  status?: 'pending' | 'approved'
 }
 
 /** 本机令牌（加密后落 Keystore，明文只在内存里） */
@@ -109,6 +114,63 @@ export const fromExpToken = (token: string): string | null => {
   return Number.isNaN(ts) ? null : new Date(ts).toISOString()
 }
 
+/* --------------------------- 授权申请码 --------------------------- */
+//
+// 客户端没有 GitHub 写权限（有的话等于把白名单写权限发给所有人），
+// 所以「用户确认 QQ → 提交申请」这一步做成一段可复制的申请码：
+//   YQR1.<hex(JSON)>.<hex(HMAC,前 32 位)>
+// 管理端粘贴后校验 HMAC、展示 QQ/头像，再决定「通过」还是「待审核/拒绝」。
+
+export const REQUEST_PREFIX = 'YQR1'
+
+export interface AuthzRequest {
+  v: 1
+  qq: string
+  nick: string
+  code: string
+  ts: number
+}
+
+const toHex = (text: string): string => {
+  const bytes = new TextEncoder().encode(text)
+  let out = ''
+  for (let i = 0; i < bytes.length; i++) out += bytes[i].toString(16).padStart(2, '0')
+  return out
+}
+
+const fromHex = (hex: string): string => {
+  const clean = String(hex ?? '').replace(/[^0-9a-fA-F]/g, '')
+  if (clean.length % 2 !== 0) return ''
+  const bytes = new Uint8Array(clean.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16)
+  return new TextDecoder().decode(bytes)
+}
+
+export const packRequest = (request: AuthzRequest, macHex: string): string =>
+  `${REQUEST_PREFIX}.${toHex(JSON.stringify(request))}.${String(macHex).slice(0, 32)}`
+
+export const unpackRequest = (raw: string): { request: AuthzRequest, macHex: string, bodyHex: string } | null => {
+  const text = String(raw ?? '').trim()
+  const parts = text.split('.')
+  if (parts.length !== 3) return null
+  if (parts[0].toUpperCase() !== REQUEST_PREFIX) return null
+  if (!/^[0-9a-fA-F]+$/.test(parts[1]) || parts[1].length % 2 !== 0) return null
+  if (!/^[0-9a-fA-F]{32}$/.test(parts[2])) return null
+  try {
+    const data = JSON.parse(fromHex(parts[1])) as AuthzRequest
+    if (!data || data.v !== 1) return null
+    const qq = normalizeQQ(data.qq)
+    if (!isValidQQ(qq)) return null
+    return {
+      request: { v: 1, qq, nick: String(data.nick ?? '').slice(0, 40), code: normalizeCode(data.code), ts: Number(data.ts) || 0 },
+      macHex: parts[2].toLowerCase(),
+      bodyHex: parts[1].toLowerCase(),
+    }
+  } catch {
+    return null
+  }
+}
+
 /* --------------------------- 离线授权串（RSA 签名） --------------------------- */
 
 /** 待签名内容：设备码 + 到期日 */
@@ -155,6 +217,8 @@ export const parseWhitelist = (text: string): { updatedAt: number, devices: Whit
         at: asString(entry.at) || undefined,
         qq: asString((entry as { qq?: unknown }).qq) || undefined,
         qk: qk.length === 64 ? qk : undefined,
+        nick: asString((entry as { nick?: unknown }).nick) || undefined,
+        status: (entry as { status?: unknown }).status === 'pending' ? 'pending' : 'approved',
       })
     }
     const parsed = Date.parse(asString(data.updatedAt))
@@ -234,6 +298,8 @@ export interface EvaluateInput {
   cloudFresh: boolean
   /** 本机条目是否在黑名单里 */
   banned: boolean
+  /** 云端条目是不是还在人工审核（pending） */
+  entryPending?: boolean
   /** 绑定的 QQ 是否在黑名单里（换设备也要拦） */
   qqBanned?: boolean
   /** 系统时间被调回 */
@@ -287,6 +353,7 @@ export const evaluate = (input: EvaluateInput, now = Date.now()): EvaluateResult
   }
 
   if (input.cloudFresh && input.entry) {
+    if (input.entryPending) return result('review', '已提交授权申请，等待管理员人工审核', entryExp, now)
     if (isExpired(entryExp, now)) return result('expired', '授权已到期，请联系管理员续期', entryExp, now)
     return result('ready', '管理员已授权，去绑定本机指纹即可使用', entryExp, now)
   }
@@ -304,6 +371,7 @@ export const statusText = (status: LicenseStatus): string => {
     case 'none': return '未授权'
     case 'ready': return '待绑定指纹'
     case 'locked': return '待验证指纹'
+    case 'review': return '待管理员审核'
     case 'active': return '已授权'
     case 'expired': return '授权已到期'
     case 'banned': return '已封禁'

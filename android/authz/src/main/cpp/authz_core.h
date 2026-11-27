@@ -45,6 +45,9 @@ std::string entryKey(const std::string& device_code);
 /** QQ 的条目键：按 QQ 封禁 / 反查授权都靠它（明文 QQ 不进公开文件） */
 std::string qqKey(const std::string& qq);
 
+/** 用授权核密钥给一段文本做 HMAC（授权申请码用：防止复制过程被改动） */
+std::string signText(const std::string& text);
+
 /** 到期日编码：0 = 永久；单位为「2020-01-01 起的天数 + 1」，范围 1..32767 */
 uint16_t expDayFromMs(int64_t exp_ms);
 /** 0 表示永久或非法输入 */

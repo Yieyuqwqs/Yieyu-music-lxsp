@@ -86,6 +86,7 @@ public final class AuthzModule extends ReactContextBaseJavaModule {
   private static native String nativeDeviceCode(String seed);
   private static native String nativeEntryKey(String deviceCode);
   private static native String nativeQqKey(String qq);
+  private static native String nativeSignText(String text);
   private static native String nativeMigrateExport(String deviceCode, long expMs, long nowSec);
   private static native String nativeMigrateImport(String code, long nowSec);
   private static native String nativeSelfTest();
@@ -170,6 +171,20 @@ public final class AuthzModule extends ReactContextBaseJavaModule {
       promise.resolve(nativeQqKey(qq == null ? "" : qq));
     } catch (Throwable error) {
       promise.reject("AUTHZ_QQ_KEY", message(error));
+    }
+  }
+
+  /** 给一段文本做 HMAC（授权申请码防篡改） */
+  @ReactMethod
+  public void signText(String text, Promise promise) {
+    if (!LOADED) {
+      promise.reject("AUTHZ_NATIVE", LOAD_ERROR);
+      return;
+    }
+    try {
+      promise.resolve(nativeSignText(text == null ? "" : text));
+    } catch (Throwable error) {
+      promise.reject("AUTHZ_SIGN", message(error));
     }
   }
 

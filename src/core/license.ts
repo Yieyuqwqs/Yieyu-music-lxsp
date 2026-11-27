@@ -15,7 +15,7 @@ import licenseState from '@/store/license/state'
 import {
   type AuthzToken, type BindVia, type EvaluateResult, type WhitelistEntry,
   buildOfflineAuthPayload, decodeToken, encodeToken, evaluate, findEntry, fromExpToken,
-  isExpired, isUsableStatus, isValidQQ, maskQQ, normalizeCode, parseBlacklist, parseWhitelist,
+  isExpired, isUsableStatus, isValidQQ, maskQQ, normalizeCode, packRequest, parseBlacklist, parseWhitelist,
   unpackOfflineAuth,
   MIGRATION_PREFIX, daysLeftOf,
 } from './authz/protocol'
@@ -194,6 +194,7 @@ const applyEvaluate = async(): Promise<EvaluateResult> => {
     hasToken: tokenExists,
     token: memoryToken,
     entry,
+    entryPending: entry?.status === 'pending',
     cloudFresh,
     banned,
     qqBanned,
@@ -508,6 +509,36 @@ export const applyAuthString = async(raw: string, qq: string): Promise<{ ok: boo
   if (!isValidQQ(String(qq ?? '').replace(/[^0-9]/g, ''))) return { ok: false, message: '请先填写有效的 QQ 号（5~12 位数字）' }
   if (text.toUpperCase().startsWith(MIGRATION_PREFIX)) return applyMigration(text, qq)
   return applyOfflineAuth(text, qq)
+}
+
+/**
+ * 生成「授权申请码」：客户端没有云端写权限，所以把 QQ + 设备码打包成一段可复制的串，
+ * 用户发给管理员；管理端粘贴后校验 HMAC、看头像/昵称，再决定通过或待审核。
+ */
+export const buildRequestCode = async(qq: string, nickname: string): Promise<{ ok: boolean, message: string, code?: string }> => {
+  const normalized = normalizeCode(qq)
+  if (!isValidQQ(normalized)) return { ok: false, message: '请填写有效的 QQ 号（5~12 位数字）' }
+  if (!nativeOk) return { ok: false, message: '授权核不可用，请更新到最新版本' }
+  await getDeviceCode()
+  if (!deviceCode) return { ok: false, message: '设备码还没准备好，请稍后重试' }
+
+  try {
+    // 申请码 = YQR1.<hex(JSON)>.<HMAC 前 32 位>，HMAC 用授权核里的密钥，复制过程被改动立刻能发现
+    const request = {
+      v: 1 as const,
+      qq: normalized,
+      nick: String(nickname ?? '').slice(0, 40),
+      code: normalizeCode(deviceCode),
+      ts: Math.floor(Date.now() / 1000),
+    }
+    const bodyHex = Array.from(new TextEncoder().encode(JSON.stringify(request)))
+      .map(byte => byte.toString(16).padStart(2, '0')).join('')
+    const mac = await authzNative.signText(bodyHex)
+    const code = packRequest(request, mac)
+    return { ok: true, message: '申请码已生成，发给管理员即可', code }
+  } catch (error) {
+    return { ok: false, message: errText(error) }
+  }
 }
 
 /** 老设备导出迁移码（必须先验过指纹） */

@@ -27,6 +27,9 @@ export const getEntryKey = (deviceCode: string): Promise<string> => call<string>
 /** QQ 的条目键（HMAC，64 位十六进制）：公开名单里只存这个 */
 export const getQqKey = (qq: string): Promise<string> => call<string>('getQqKey', qq)
 
+/** 给文本做 HMAC（授权申请码防篡改） */
+export const signText = (text: string): Promise<string> => call<string>('signText', text)
+
 export const getBiometricState = (): Promise<{ available: boolean, message: string }> => call('getBiometricState')
 
 export const hasToken = (): Promise<boolean> => call<boolean>('hasToken')
@@ -63,6 +66,7 @@ export default {
   getDeviceCode,
   getEntryKey,
   getQqKey,
+  signText,
   getBiometricState,
   hasToken,
   storeToken,

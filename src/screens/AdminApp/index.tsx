@@ -1,13 +1,16 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View,
+  Alert, Image, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 
 import { sha256 } from '@/utils/sha256'
 import { rsaSign, rsaVerify } from '@/utils/rsa'
 import authzNative from '@/utils/nativeModules/authz'
-import { buildOfflineAuthPayload, isValidQQ, maskQQ, normalizeCode, packOfflineAuth, toExpToken } from '@/core/authz/protocol'
+import {
+  buildOfflineAuthPayload, isValidQQ, maskQQ, normalizeCode, packOfflineAuth, toExpToken, unpackRequest,
+} from '@/core/authz/protocol'
+import { avatarUrlOf } from '@/utils/qqProfile'
 import { AUTHZ_BLACKLIST_FILE, AUTHZ_OWNER, AUTHZ_REPO, AUTHZ_WHITELIST_FILE, AUTHZ_BRANCH } from '@/config/authz'
 import { LICENSE_PUBLIC_KEY } from '@/config/licenseKey'
 // 私钥由 CI 注入（scripts/write-admin-key.js）；仓库里只有 DEV 占位，签出来的串客户端验不过
@@ -75,6 +78,8 @@ interface WhitelistEntry {
   at?: string
   qq?: string
   qk?: string
+  nick?: string
+  status?: 'pending' | 'approved'
 }
 
 const maskKey = (key: string) => key.slice(0, 10) + '…' + key.slice(-4)
@@ -100,6 +105,9 @@ const AdminApp = memo(() => {
   const [banned, setBanned] = useState<string[]>([])
   const [qqInput, setQQInput] = useState('')
   const [bannedQQ, setBannedQQ] = useState<string[]>([])
+  const [requestRaw, setRequestRaw] = useState('')
+  const [request, setRequest] = useState<{ qq: string, nick: string, code: string, ts: number, bodyHex: string, macHex: string } | null>(null)
+  const [requestBusy, setRequestBusy] = useState(false)
   const [listTip, setListTip] = useState('')
 
   // ---------------------------------------------------------------- 登录
@@ -364,6 +372,100 @@ const AdminApp = memo(() => {
     }
   }, [loadFile, qqInput, qqKeyOf, writeFile])
 
+  const durationExp = useCallback((): string | null => {
+    const days = effectiveDays
+    return days > 0 ? new Date(Date.now() + days * 86400000).toISOString() : null
+  }, [effectiveDays])
+
+  /** 解析授权申请码：校验 HMAC，展示 QQ / 头像 / 设备码，等人审 */
+  const handleParseRequest = useCallback(async() => {
+    const raw = requestRaw.trim()
+    if (!raw) {
+      Alert.alert('提示', '请粘贴用户发来的申请码（YQR1 开头）')
+      return
+    }
+    setRequestBusy(true)
+    try {
+      const unpacked = unpackRequest(raw)
+      if (!unpacked) throw new Error('申请码格式不正确')
+      const mac = await authzNative.signText(unpacked.bodyHex)
+      if (!mac || mac.slice(0, 32) !== unpacked.macHex) throw new Error('申请码校验失败（可能被改过）')
+      setRequest({ ...unpacked.request, bodyHex: unpacked.bodyHex, macHex: unpacked.macHex })
+      setQQInput(unpacked.request.qq)
+      Alert.alert('申请码校验通过', '确认头像/QQ 无误后选「通过并开通」或「记入待审核」。')
+    } catch (err: any) {
+      setRequest(null)
+      Alert.alert('解析失败', String(err?.message ?? err))
+    } finally {
+      setRequestBusy(false)
+    }
+  }, [requestRaw])
+
+  /** 通过（或先记入待审核）：按当前时长写入白名单条目 */
+  const handleApproveRequest = useCallback(async(status: 'approved' | 'pending') => {
+    if (!request) return
+    setRequestBusy(true)
+    setTip(status === 'approved' ? '正在开通…' : '正在记入待审核…')
+    try {
+      const key = await entryKeyOf(request.code)
+      const qk = await qqKeyOf(request.qq)
+      const current = await loadFile(WHITELIST_FILE)
+      const list: WhitelistEntry[] = Array.isArray(current?.json?.devices)
+        ? (current!.json.devices as WhitelistEntry[]).filter(item => item && item.k !== key)
+        : []
+      const entry: WhitelistEntry = {
+        k: key,
+        exp: durationExp(),
+        at: new Date().toISOString(),
+        qq: maskQQ(request.qq),
+        qk,
+        nick: request.nick || undefined,
+        status,
+      }
+      list.push(entry)
+      await writeFile(WHITELIST_FILE, { version: 1, updatedAt: new Date().toISOString(), devices: list }, current?.sha ?? null,
+        status === 'approved' ? `authz: 审核通过 QQ ${maskQQ(request.qq)}` : `authz: 待审核 QQ ${maskQQ(request.qq)}`)
+      setDevices(list)
+      setTip(status === 'approved'
+        ? `已开通 QQ ${maskQQ(request.qq)} · 让用户点「刷新授权状态」`
+        : `已记入待审核：QQ ${maskQQ(request.qq)}（用户那边会显示"待管理员审核"）`)
+      if (status === 'approved') setRequest(null)
+    } catch (err: any) {
+      setTip((status === 'approved' ? '开通失败：' : '写入失败：') + String(err?.message ?? err))
+    } finally {
+      setRequestBusy(false)
+    }
+  }, [durationExp, entryKeyOf, loadFile, qqKeyOf, request, writeFile])
+
+  /** 拒绝：直接按 QQ 封禁（同时拉黑设备条目） */
+  const handleRejectRequest = useCallback(() => {
+    if (!request) return
+    Alert.alert('拒绝并封禁', `确定封禁 QQ ${maskQQ(request.qq)}？换设备也无法使用。`, [
+      { text: '取消', style: 'cancel' },
+      { text: '拒绝并封禁', style: 'destructive', onPress: () => { setQQInput(request.qq); void banByQQ(true).then(() => setRequest(null)) } },
+    ])
+  }, [banByQQ, request])
+
+  /** 待审核列表里点「通过」：把已有条目从 pending 改成 approved */
+  const approveEntry = useCallback(async(entry: WhitelistEntry) => {
+    setRequestBusy(true)
+    setTip('正在通过…')
+    try {
+      const current = await loadFile(WHITELIST_FILE)
+      const list: WhitelistEntry[] = Array.isArray(current?.json?.devices)
+        ? (current!.json.devices as WhitelistEntry[]).map(item => item && item.k === entry.k ? { ...item, status: 'approved' as const, exp: item.exp ?? durationExp() } : item)
+        : []
+      await writeFile(WHITELIST_FILE, { version: 1, updatedAt: new Date().toISOString(), devices: list }, current?.sha ?? null,
+        `authz: 审核通过 ${entry.qq || entry.k.slice(0, 8)}`)
+      setDevices(list)
+      setTip(`已通过 ${entry.qq || entry.k.slice(0, 8)}`)
+    } catch (err: any) {
+      setTip('通过失败：' + String(err?.message ?? err))
+    } finally {
+      setRequestBusy(false)
+    }
+  }, [durationExp, loadFile, writeFile])
+
   const handleBan = useCallback(() => {
     const device = validateInput()
     if (!device) return
@@ -565,6 +667,52 @@ const AdminApp = memo(() => {
           : null}
 
         <View style={{ marginTop: 30, borderTopWidth: 1, borderTopColor: '#2b303b', paddingTop: 20 }}>
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>授权申请（用户发来的 YQR1 申请码）</Text>
+          <Text style={styles.hint}>用户在授权页核对头像后生成申请码；这里粘贴 → 校验 HMAC → 看头像/QQ/设备码 → 通过或待审核。</Text>
+          <View style={styles.inputBox}>
+            <TextInput
+              value={requestRaw}
+              onChangeText={setRequestRaw}
+              placeholder="粘贴 YQR1.xxxx.xxxx"
+              placeholderTextColor="#5a6270"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              multiline
+              style={[styles.input, { minHeight: 56, fontSize: 12 }]}
+            />
+          </View>
+          <Pressable onPress={() => { void handleParseRequest() }} style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}>
+            <Text style={styles.secondaryText}>{requestBusy ? '解析中…' : '解析申请码'}</Text>
+          </Pressable>
+
+          {request
+            ? (
+              <View style={{ marginTop: 12, backgroundColor: '#0d1117', borderRadius: 10, borderWidth: 1, borderColor: '#2b303b', padding: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Image source={{ uri: avatarUrlOf(request.qq) }} style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: '#1c1f26' }} />
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{request.qq}</Text>
+                    <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 2 }}>{request.nick || '（昵称未知，请看头像核对）'}</Text>
+                    <Text selectable style={{ color: '#7ee0ff', fontSize: 11, marginTop: 4 }}>设备码 {request.code}</Text>
+                  </View>
+                </View>
+                <View style={{ flexDirection: 'row', marginTop: 12 }}>
+                  <Pressable onPress={() => { void handleApproveRequest('approved') }} style={({ pressed }) => [styles.primaryBtn, { flex: 1, marginRight: 8, marginTop: 0, backgroundColor: '#238636' }, pressed && styles.pressed]}>
+                    <Text style={styles.primaryText}>通过并开通</Text>
+                  </Pressable>
+                  <Pressable onPress={() => { void handleApproveRequest('pending') }} style={({ pressed }) => [styles.secondaryBtn, { flex: 1, marginTop: 0, marginRight: 8 }, pressed && styles.pressed]}>
+                    <Text style={styles.secondaryText}>记入待审核</Text>
+                  </Pressable>
+                  <Pressable onPress={handleRejectRequest} style={({ pressed }) => [styles.unbanBtn, { paddingHorizontal: 12, marginTop: 0 }, pressed && styles.pressed]}>
+                    <Text style={styles.secondaryText}>拒绝</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )
+            : null}
+        </View>
+
+        <View style={{ marginTop: 30, borderTopWidth: 1, borderTopColor: '#2b303b', paddingTop: 20 }}>
           <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>云端名单</Text>
           <Text style={styles.hint}>
             {WHITELIST_FILE} 决定谁能用；{BLACKLIST_FILE} 是封禁（客户端联网即锁死）。
@@ -618,7 +766,13 @@ const AdminApp = memo(() => {
                   <View key={item.k} style={styles.banRow}>
                     <Text selectable style={styles.banHash}>{item.qq ? item.qq : '未绑QQ'}</Text>
                     <Text selectable style={styles.banHash}>{maskKey(item.k)}</Text>
-                    <Text style={styles.banExp}>{item.exp ? item.exp.slice(0, 10) : '永久'}</Text>
+                    {item.status === 'pending'
+                      ? (
+                        <Pressable onPress={() => { void approveEntry(item) }} style={({ pressed }) => [styles.banDelBtn, pressed && styles.pressed]}>
+                          <Text style={styles.banDelText}>待审核 · 点通过</Text>
+                        </Pressable>
+                      )
+                      : <Text style={styles.banExp}>{item.exp ? item.exp.slice(0, 10) : '永久'}</Text>}
                   </View>
                 ))}
                 {devices.length > 15 ? <Text style={styles.hint}>仅显示最新 15 台，共 {devices.length} 台</Text> : null}
