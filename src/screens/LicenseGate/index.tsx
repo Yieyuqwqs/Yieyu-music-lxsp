@@ -189,12 +189,6 @@ export default memo(({ componentId }: { componentId: string }) => {
     return value
   }, [qq])
 
-  const handleCopy = useCallback(() => {
-    if (!info.deviceCode) return
-    clipboardWriteText(info.deviceCode)
-    toast('设备码已复制，发给管理员开通')
-  }, [info.deviceCode])
-
   const handlePrimary = useCallback(() => {
     if (needUnlock) {
       void exec(unlockWithFingerprint, enterIfActive)
@@ -274,14 +268,8 @@ export default memo(({ componentId }: { componentId: string }) => {
             ? <Text style={{ color: status === 'review' ? '#e3b341' : '#8b93a1', fontSize: 12, marginTop: 8, lineHeight: 18 }}>{info.message}</Text>
             : null}
 
-          <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 18 }}>本机设备码（发给管理员）</Text>
-          <TouchableOpacity onPress={handleCopy}>
-            <Text style={{ color: '#7ee0ff', fontSize: 19, fontWeight: '700', letterSpacing: 1.4, marginTop: 6 }}>
-              {info.deviceCode || '生成中…'}
-            </Text>
-          </TouchableOpacity>
-          <Text style={{ color: '#5a6270', fontSize: 11, marginTop: 6 }}>
-            点击复制 · 硬件派生：重装/清数据不变，换手机才变
+          <Text style={{ color: '#5a6270', fontSize: 11, marginTop: 14 }}>
+            设备码不用手抄了：生成申请码时会自动带上（换手机也还是同一套流程）。
           </Text>
 
           <Text style={{ color: '#8b93a1', fontSize: 12, marginTop: 14 }}>QQ 号（必填 · 管理员按它认人/封禁）</Text>

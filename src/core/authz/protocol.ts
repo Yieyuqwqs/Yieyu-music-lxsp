@@ -394,19 +394,20 @@ export const evaluate = (input: EvaluateInput, now = Date.now()): EvaluateResult
     if (input.cloudFresh && input.entry == null && whitelistBacked) {
       return result('none', '管理员已移除本机授权，请把设备码重新发给管理员', null, now)
     }
+    // 云端在线时以云端为准（续期/改期直接生效，不要求用户再走一次绑定）
     const effectiveExp = input.cloudFresh && input.entry ? entryExp : tokenExp
     if (isExpired(effectiveExp, now)) return result('expired', '授权已到期，请联系管理员续期', effectiveExp, now)
-    // 强制绑定：Aurora-67 之前绑的授权没有 QQ，必须补绑才能继续用
+    // 强制绑定：老授权没有 QQ，必须补绑才能继续用
+    if (input.tokenHasQQ === false) {
+      return result('bind_qq', '旧授权还没绑定 QQ：填写 QQ 后点「绑定 QQ 后使用」', effectiveExp, now)
+    }
     if (input.token != null && !input.token.qqKey) {
-      return result('bind_qq', '旧授权还没绑定 QQ：填写 QQ 并提交申请，绑定后即可正常使用', effectiveExp, now)
+      return result('bind_qq', '旧授权还没绑定 QQ：填写 QQ 后点「绑定 QQ 后使用」', effectiveExp, now)
     }
     if (input.token == null) {
       return result('locked', '已绑定本机，验证指纹后进入', effectiveExp, now)
     }
-    if (input.cloudFresh && input.entry && (entryExp ?? null) !== (tokenExp ?? null)) {
-      return result('ready', '授权信息有变更，请重新验证指纹同步', entryExp, now)
-    }
-    return result('active', entryExp == null && tokenExp == null ? '已授权，永久有效' : '已授权', effectiveExp, now)
+    return result('active', effectiveExp == null ? '已授权，永久有效' : '已授权', effectiveExp, now)
   }
 
   if (input.cloudFresh && input.entry) {

@@ -346,13 +346,16 @@ t.suite('状态机', () => {
     t.eq(statusOf({ hasToken: true, token: makeToken(), cloudFresh: true, entry: { k: TOKEN_KEY, exp: PAST } }), 'expired')
     t.eq(statusOf({ cloudFresh: true, entry: { k: TOKEN_KEY, exp: PAST } }), 'expired')
   })
-  t.test('续期/改期 → ready（要求重新验指纹同步）', () => {
-    t.eq(statusOf({
+  t.test("续期/改期 → 在线直接生效，不再要求重新绑定指纹", () => {
+    const extended = evaluate(baseInput({
       hasToken: true,
       token: makeToken({ exp: FUTURE }),
       cloudFresh: true,
-      entry: { k: TOKEN_KEY, exp: '2028-01-01T00:00:00.000Z' },
-    }), 'ready')
+      entry: { k: TOKEN_KEY, exp: "2028-01-01T00:00:00.000Z" },
+    }), NOW)
+    // 云端在线时以云端为准：续期立刻可用（以前这里会被打回「请重新绑定」，形成死循环）
+    t.eq(extended.status, "active")
+    t.eq(extended.exp, "2028-01-01T00:00:00.000Z")
   })
   t.test('永久授权的文案', () => {
     const result = evaluate(baseInput({ hasToken: true, token: makeToken() }), NOW)

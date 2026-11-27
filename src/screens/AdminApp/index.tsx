@@ -108,6 +108,7 @@ const AdminApp = memo(() => {
   const [requestRaw, setRequestRaw] = useState('')
   const [request, setRequest] = useState<{ qq: string, nick: string, code: string, ts: number, bodyHex: string, macHex: string } | null>(null)
   const [requestBusy, setRequestBusy] = useState(false)
+  const [showManualCode, setShowManualCode] = useState(false)
   const [listTip, setListTip] = useState('')
 
   // ---------------------------------------------------------------- 登录
@@ -321,14 +322,43 @@ const AdminApp = memo(() => {
     }
   }, [entryKeyOf, loadFile, writeFile])
 
+  /** 按 QQ 移除授权：白名单里所有 qk 匹配的条目一起删（一个 QQ 可能有多台设备） */
+  const removeByQQ = useCallback(async() => {
+    const qqValue = normalizeCode(qqInput)
+    if (!isValidQQ(qqValue)) {
+      Alert.alert('提示', '请先填写要移除授权的 QQ 号')
+      return
+    }
+    setBusy(true)
+    setTip('正在移除…')
+    try {
+      const qk = await qqKeyOf(qqValue)
+      const current = await loadFile(WHITELIST_FILE)
+      const list: WhitelistEntry[] = Array.isArray(current?.json?.devices)
+        ? (current!.json.devices as WhitelistEntry[]).filter(item => item && item.qk !== qk)
+        : []
+      await writeFile(WHITELIST_FILE, { version: 1, updatedAt: new Date().toISOString(), devices: list }, current?.sha ?? null,
+        `authz: 移除 QQ ${maskQQ(qqValue)} 的授权`)
+      setDevices(list)
+      setTip(`已移除 QQ ${maskQQ(qqValue)} 的授权`)
+    } catch (err: any) {
+      setTip('移除失败：' + String(err?.message ?? err))
+    } finally {
+      setBusy(false)
+    }
+  }, [loadFile, qqInput, qqKeyOf, writeFile])
+
   const handleRemove = useCallback(() => {
-    const device = validateInput()
-    if (!device) return
-    Alert.alert('移除设备', `确定移除 ${device} 的白名单条目？`, [
+    const qqValue = normalizeCode(qqInput)
+    if (!isValidQQ(qqValue)) {
+      Alert.alert('提示', '请先填写要移除授权的 QQ 号')
+      return
+    }
+    Alert.alert('移除授权', `确定移除 QQ ${maskQQ(qqValue)} 这台设备的授权？`, [
       { text: '取消', style: 'cancel' },
-      { text: '移除', style: 'destructive', onPress: () => { void removeDevice(device) } },
+      { text: '移除', style: 'destructive', onPress: () => { void removeByQQ() } },
     ])
-  }, [removeDevice, validateInput])
+  }, [qqInput, removeByQQ])
 
   // ---------------------------------------------------------------- 黑名单
 
@@ -594,19 +624,30 @@ const AdminApp = memo(() => {
           <Text style={styles.dangerText}>本 APK 含 RSA 私钥与白名单写权限，不要分享给任何人。</Text>
         </View>
 
-        <Text style={styles.label}>用户设备码</Text>
-        <View style={styles.inputBox}>
-          <TextInput
-            value={deviceCode}
-            onChangeText={setDeviceCode}
-            placeholder="例如 AB12-CD34-EF56-7890"
-            placeholderTextColor="#5a6270"
-            autoCapitalize="characters"
-            autoCorrect={false}
-            style={styles.input}
-          />
+        <Text style={styles.label}>设备码</Text>
+        <View style={[styles.inputBox, { backgroundColor: '#101318' }]}>
+          <Text selectable style={[styles.input, { color: deviceCode ? '#7ee787' : '#5a6270', fontFamily: 'monospace' }]}>
+            {deviceCode || '（解析下面的申请码后自动填）'}
+          </Text>
         </View>
-        <Text style={styles.hint}>让用户在客户端授权页复制设备码发给你（硬件派生，重装不变）</Text>
+        <Pressable onPress={() => setShowManualCode(v => !v)} style={({ pressed }) => [pressed && styles.pressed]}>
+          <Text style={styles.hint}>{showManualCode ? '收起手动填设备码' : '高级：手动填设备码（一般不用，申请码里自带）'}</Text>
+        </Pressable>
+        {showManualCode
+          ? (
+            <View style={styles.inputBox}>
+              <TextInput
+                value={deviceCode}
+                onChangeText={setDeviceCode}
+                placeholder="AB12-CD34-EF56-7890"
+                placeholderTextColor="#5a6270"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                style={styles.input}
+              />
+            </View>
+          )
+          : null}
 
         <Text style={styles.label}>用户 QQ 号（开通时填 → 以后按 QQ 认人/封禁）</Text>
         <View style={styles.inputBox}>
@@ -665,7 +706,7 @@ const AdminApp = memo(() => {
 
         <View style={{ flexDirection: 'row', marginTop: 10 }}>
           <Pressable onPress={handleRemove} style={({ pressed }) => [styles.secondaryBtn, { flex: 1, marginRight: 8, marginTop: 0 }, pressed && styles.pressed]}>
-            <Text style={styles.secondaryText}>移除该设备</Text>
+            <Text style={styles.secondaryText}>移除该 QQ 的授权</Text>
           </Pressable>
           <Pressable onPress={() => { void handleOfflineAuth() }} style={({ pressed }) => [styles.secondaryBtn, { flex: 1, marginTop: 0 }, pressed && styles.pressed]}>
             <Text style={styles.secondaryText}>生成离线授权串</Text>
@@ -755,15 +796,6 @@ const AdminApp = memo(() => {
           <Pressable onPress={() => { void persistToken() }} style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}>
             <Text style={styles.secondaryText}>{tokenSaved ? '更新 Token' : '保存 Token'}</Text>
           </Pressable>
-
-          <View style={{ flexDirection: 'row', marginTop: 10 }}>
-            <Pressable onPress={handleBan} style={({ pressed }) => [styles.primaryBtn, { flex: 1, marginRight: 8, marginTop: 0 }, pressed && styles.pressed]}>
-              <Text style={styles.primaryText}>{busy ? '处理中…' : '封禁该设备'}</Text>
-            </Pressable>
-            <Pressable onPress={handleUnban} style={({ pressed }) => [styles.unbanBtn, pressed && styles.pressed]}>
-              <Text style={styles.secondaryText}>解封</Text>
-            </Pressable>
-          </View>
 
           <View style={{ flexDirection: 'row', marginTop: 10 }}>
             <Pressable onPress={() => { void banByQQ(true) }} style={({ pressed }) => [styles.primaryBtn, { flex: 1, marginRight: 8, marginTop: 0, backgroundColor: '#f85149' }, pressed && styles.pressed]}>
