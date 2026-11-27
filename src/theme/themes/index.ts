@@ -86,14 +86,19 @@ export const buildActiveThemeColors = (theme: LX.Theme): LX.ActiveTheme => {
     theme.config.extInfo[k] = themeColors[v.replace(varColorRxp, '$1') as ColorsKey]
   }
 
+  // 主题可以通过 extInfo 直接指定这三项（半透明皮肤必须这样才能让壁纸透出来），
+  // 没指定的主题行为完全不变
+  const extInfoOverrides = theme.config.extInfo as Record<string, string | undefined>
+  const preferExt = (key: string, derived: string): string => extInfoOverrides[key] ?? derived
+
   return {
     id: theme.id,
     name: theme.name,
     isDark: theme.isDark,
     ...themeColors,
     ...theme.config.extInfo,
-    'c-font': themeColors['c-850'],
-    'c-font-label': themeColors['c-450'],
+    'c-font': preferExt('c-font', themeColors['c-850']),
+    'c-font-label': preferExt('c-font-label', themeColors['c-450']),
     'c-primary-font': themeColors['c-primary'],
     'c-primary-font-hover': themeColors['c-primary-alpha-300'],
     'c-primary-font-active': themeColors['c-primary-dark-100-alpha-200'],
@@ -108,7 +113,7 @@ export const buildActiveThemeColors = (theme: LX.Theme): LX.ActiveTheme => {
     'c-button-background-hover': themeColors['c-primary-light-300-alpha-600'],
     'c-button-background-active': themeColors['c-primary-light-100-alpha-600'],
     'c-list-header-border-bottom': themeColors['c-primary-alpha-900'],
-    'c-content-background': themeColors['c-primary-light-1000'],
+    'c-content-background': preferExt('c-content-background', themeColors['c-primary-light-1000']),
     'c-border-background': themeColors['c-primary-light-100-alpha-700'],
     'bg-image': bgImg,
   } as const

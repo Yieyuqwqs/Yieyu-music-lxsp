@@ -295,6 +295,30 @@ const defaultThemes = [
       'c-badge-tertiary': 'var(c-primary-light-100)',
     },
   },
+  // ---------------------------------------------------------------------------
+  // 雪见：全屏壁纸 + 半透明面板（对应「壁纸透出来、字压在图上」的皮肤）
+  // 面板透明度写在 extInfo 里，由 buildActiveThemeColors 优先采用（见 themes/index.ts）
+  // ---------------------------------------------------------------------------
+  {
+    id: 'snow',
+    name: '雪见',
+    isDark: false,
+    config: {
+      primary: 'rgb(90, 167, 232)',
+      font: 'rgb(32, 46, 62)',
+      'c-app-background': 'rgba(255, 255, 255, 0.04)',
+      'c-main-background': 'rgba(255, 255, 255, 0.10)',
+      // 玻璃面板：越透明壁纸越明显；字靠深色 + 可选字体阴影保证可读
+      'c-content-background': 'rgba(255, 255, 255, 0.42)',
+      'bg-image': '',
+      'bg-image-position': 'center',
+      'bg-image-size': 'cover',
+
+      'c-badge-primary': 'var(c-primary)',
+      'c-badge-secondary': '#63b3e8',
+      'c-badge-tertiary': '#e7aa36',
+    },
+  },
 ]
 
 const themes = defaultThemes.map(({ config: { primary, font, ...extInfo }, ...themeInfo }) => {

@@ -6,6 +6,13 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-77 - 2026-11-28
+
+### 新增
+
+- 内置主题「雪见」：半透明玻璃面板 + 浅冰蓝配色，壁纸可透到列表/播放条
+- 全局字体设置（`theme.fontFamily`）：系统 / 衬线（近楷体）/ 细体
+- 主题系统支持 extInfo 覆盖 `c-content-background` / `c-font` / `c-font-label`（半透明皮肤用）
 ## 1.9-Aurora-76 - 2026-11-28
 
 ### 安全

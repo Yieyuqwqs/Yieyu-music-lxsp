@@ -2,6 +2,32 @@
   "updatedAt": "2026-11-28",
   "claims": [
     {
+      "id": "theme-translucent-optin",
+      "claim": "主题可通过 extInfo 覆盖 c-content-background/c-font/c-font-label，未声明的主题行为不变",
+      "source": "实测",
+      "evidence": [
+        "src/theme/themes/index.ts（preferExt）"
+      ]
+    },
+    {
+      "id": "global-font-family",
+      "claim": "全局字体设置生效于正文/标题/歌词/设置项（系统 / 衬线 / 细体）",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/ui-theme.test.mjs",
+        "src/components/common/Text.tsx（6 处注入）"
+      ]
+    },
+    {
+      "id": "snow-theme",
+      "claim": "内置「雪见」主题：内容面板 42% 白半透明，壁纸可透到列表与播放条（其它主题不受影响）",
+      "source": "实测",
+      "evidence": [
+        "src/theme/themes/createThemes.js（snow 条目）",
+        "node src/theme/themes/createThemes.js 生成物含 17 套主题"
+      ]
+    },
+    {
       "id": "errors-visible",
       "claim": "换源/换音质/搜索失败时，每个音源的真实原因会汇总抛出并在界面显示（不再只 console.log）",
       "source": "实测",

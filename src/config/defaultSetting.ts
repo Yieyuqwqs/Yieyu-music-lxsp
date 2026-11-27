@@ -158,6 +158,7 @@ const defaultSetting: LX.AppSetting = {
   'theme.dynamicBg': false,
   'theme.customBgPic': '',
   'theme.fontShadow': false,
+  'theme.fontFamily': '',
   'theme.customPrimary': '',
   'theme.bgBlur': 18,
   'theme.bgDark': 76,

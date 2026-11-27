@@ -300,6 +300,14 @@ declare global {
           'c-badge-primary': string
           'c-badge-secondary': string
           'c-badge-tertiary': string
+
+          /* ---- 可选：让主题自己决定「面板透明度」（半透明皮肤用） ---- */
+          /** 内容面板底色；给了就用主题的，没给沿用主色推导 */
+          'c-content-background'?: string
+          /** 正文字色；给了就用主题的（渲染时优先于推导色） */
+          'c-font'?: string
+          /** 次级文字色 */
+          'c-font-label'?: string
         }
       }
     }

@@ -135,6 +135,12 @@ declare global {
       'theme.fontShadow': boolean
 
       /**
+       * 全局字体族（'' = 系统默认；serif = 衬线/近楷体；sans-serif-light = 细体）
+       * 壁纸类皮肤靠它拿到「手写/楷体」的观感
+       */
+      'theme.fontFamily': string
+
+      /**
        * 自定义主色（空字符串表示使用主题自带主色）
        */
       'theme.customPrimary': string

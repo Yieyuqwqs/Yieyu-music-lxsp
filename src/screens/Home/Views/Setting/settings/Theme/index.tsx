@@ -11,6 +11,7 @@ import LyricColor from './LyricColor'
 import BgAdjust from './BgAdjust'
 import SkinPack from './SkinPack'
 import IsFontShadow from './IsFontShadow'
+import FontFamily from './FontFamily'
 // import { useI18n } from '@/lang/i18n'
 
 export default memo(() => {
@@ -25,6 +26,7 @@ export default memo(() => {
       <BgAdjust />
       <SkinPack />
       <CustomBg />
+      <FontFamily />
       <IsFontShadow />
     </>
   )
