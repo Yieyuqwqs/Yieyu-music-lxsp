@@ -2,6 +2,7 @@ import searchMusicState, { type Source } from '@/store/search/music/state'
 import searchMusicActions, { type SearchResult } from '@/store/search/music/action'
 import musicSdk from '@/utils/musicSdk'
 import { sourceEngine } from '@/core/source'
+import { AllSourcesFailedError, toAttemptFailure, type AttemptFailure } from '@/utils/attemptErrors'
 
 export const setSource: typeof searchMusicActions['setSource'] = (source) => {
   searchMusicActions.setSource(source)
@@ -47,22 +48,31 @@ export const search = async(text: string, page: number, sourceId: Source): Promi
   const key = `${page}__${text}`
   if (sourceId == 'all') {
     listInfo.key = key
-    let task = []
+    const task: Array<Promise<SearchResult>> = []
+    const failures: AttemptFailure[] = []
+    let okCount = 0
     for (const source of searchMusicState.sources) {
       if (source == 'all') continue
-      task.push(searchBySource(source, text, page, searchMusicState.listInfos.all.limit).catch((error: any) => {
-        console.log(error)
+      task.push(searchBySource(source, text, page, searchMusicState.listInfos.all.limit).then((result) => {
+        okCount += 1
+        return result
+      }, (error: any) => {
+        // 单个源失败不该毁掉整页结果；但"全部失败"必须说出来，不许装成"没有歌"
+        failures.push(toAttemptFailure(source, error))
         return {
           allPage: 1,
           limit: 30,
           list: [],
           source,
           total: 0,
-        }
+        } as SearchResult
       }))
     }
     return Promise.all(task).then((results: SearchResult[]) => {
       if (key != listInfo.key) return []
+      if (okCount === 0 && failures.length > 0 && failures.length === task.length) {
+        throw new AllSourcesFailedError(global.i18n.t('search_all_failed'), failures)
+      }
       setSearchText(text)
       setSource(sourceId)
       return setListInfo(results, page, text)

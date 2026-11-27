@@ -40,51 +40,79 @@ const t = (key: string, params?: Record<string, string | number | boolean>): str
 /**
  * 逐级创建目录
  */
-const ensureDir = async(dir: string) => {
+const ensureDir = async(dir: string): Promise<string> => {
   const parts = dir.split('/').filter(Boolean)
   let path = ''
   for (const part of parts) {
     path += `/${part}`
     try {
       if (!(await RNFS.exists(path))) await RNFS.mkdir(path)
-    } catch {}
+    } catch (error) {
+      // 以前这里是 `catch {}`：目录建不出来也当成功了，最后只会"文件不见了"
+      return `${path}: ${(error as Error)?.message ?? String(error)}`
+    }
   }
+  return ''
 }
 
-const isDirWritable = async(dir: string) => {
+/** 目录能否写：失败要带原因（否则调用方只能瞎猜） */
+const isDirWritable = async(dir: string): Promise<{ ok: boolean, reason?: string }> => {
+  const mkdirError = await ensureDir(dir)
+  if (mkdirError) return { ok: false, reason: `建目录失败 ${mkdirError}` }
   try {
-    await ensureDir(dir)
     const testPath = `${dir}/.lx_download_test`
     await RNFS.writeFile(testPath, 'ok', 'utf8')
     await RNFS.unlink(testPath).catch(() => {})
-    return true
-  } catch {
-    return false
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, reason: `写入被拒 ${(error as Error)?.message ?? String(error)}` }
   }
 }
 
-const requestStoragePermission = async() => {
-  if (Platform.OS != 'android') return true
+/**
+ * 申请存储写权限。
+ *
+ * 根因：WRITE_EXTERNAL_STORAGE 在 Android 13(API 33)+ 对 targetSdk≤32 的应用已不再生效，
+ * 以前无脑 request 会弹一个"点了也没用"的框，用户以为授权了、实际仍然写不进去。
+ * 现在：系统版本 ≥ 33 直接跳过申请，并把原因交回调用方显示。
+ */
+const requestStoragePermission = async(): Promise<{ granted: boolean, reason?: string }> => {
+  if (Platform.OS != 'android') return { granted: true }
+  const sdk = typeof Platform.Version === 'number' ? Platform.Version : Number(Platform.Version) || 0
+  if (sdk >= 33) return { granted: false, reason: `Android ${sdk} 已不支持 WRITE_EXTERNAL_STORAGE，公共目录可能不可写` }
   try {
     const permission = PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE
-    if (await PermissionsAndroid.check(permission)) return true
+    if (await PermissionsAndroid.check(permission)) return { granted: true }
     const result = await PermissionsAndroid.request(permission)
-    return result == PermissionsAndroid.RESULTS.GRANTED
-  } catch {
-    return false
+    return result === PermissionsAndroid.RESULTS.GRANTED
+      ? { granted: true }
+      : { granted: false, reason: '用户未授予存储写权限' }
+  } catch (error) {
+    return { granted: false, reason: `申请存储权限失败 ${(error as Error)?.message ?? String(error)}` }
   }
 }
+
+/** 上次回退的原因（空串 = 一切正常）。UI 用它把"文件去哪了"讲清楚。 */
+let saveDirNotice = ''
+export const getSaveDirNotice = (): string => saveDirNotice
 
 export const getSaveDir = async(): Promise<string> => {
   if (saveDir) return saveDir
+  // 每一级失败都要留原因：以前是静默降级，用户只看到"下载完成"，却找不到文件
+  const failures: string[] = []
+
   const customDir = (settingState.setting['download.savePath'] ?? '').trim()
   if (customDir) {
-    if (await isDirWritable(customDir)) {
+    const check = await isDirWritable(customDir)
+    if (check.ok) {
       saveDir = customDir
+      saveDirNotice = ''
       downloadAction.setSaveDir(customDir)
       return customDir
     }
+    failures.push(`自定义目录 ${customDir}（${check.reason ?? '不可写'}）`)
   }
+
   const lastSaveDir = await getDownloadSaveDir().catch(() => '')
   const externalPath = RNFS.ExternalDirectoryPath
   const candidates: string[] = []
@@ -92,19 +120,32 @@ export const getSaveDir = async(): Promise<string> => {
   candidates.push(DEFAULT_SAVE_DIR)
   candidates.push(`${externalPath}/Music`)
   candidates.push(`${externalPath}/Download`)
-  await requestStoragePermission()
+
+  const permission = await requestStoragePermission()
+  if (!permission.granted) failures.push(permission.reason ?? '没有存储写权限')
+
   for (const dir of candidates) {
-    if (!(await isDirWritable(dir))) continue
+    const check = await isDirWritable(dir)
+    if (!check.ok) {
+      failures.push(`${dir}（${check.reason ?? '不可写'}）`)
+      continue
+    }
     saveDir = dir
+    // 先写 notice 再通知界面，保证重渲染时读到的是新值
+    saveDirNotice = failures.length ? failures.join('；') : ''
     downloadAction.setSaveDir(dir)
     if (dir != lastSaveDir) void saveDownloadSaveDir(dir)
     return dir
   }
-  saveDir = `${RNFS.DocumentDirectoryPath}/Music`
-  await ensureDir(saveDir)
-  downloadAction.setSaveDir(saveDir)
-  void saveDownloadSaveDir(saveDir)
-  return saveDir
+
+  const fallback = `${RNFS.DocumentDirectoryPath}/Music`
+  const mkdirError = await ensureDir(fallback)
+  if (mkdirError) failures.push(`应用私有目录 ${fallback}（${mkdirError}）`)
+  saveDir = fallback
+  saveDirNotice = failures.length ? failures.join('；') : ''
+  downloadAction.setSaveDir(fallback)
+  void saveDownloadSaveDir(fallback)
+  return fallback
 }
 
 /**
@@ -241,7 +282,8 @@ const runTask = async(task: LX.Download.ListItem) => {
     let dir = await getSaveDir()
     if (settingState.setting['download.folderStructure']) {
       dir = dir + '/' + sanitizeFileName(task.metadata.musicInfo.singer || '未知歌手')
-      await ensureDir(dir)
+      const mkdirError = await ensureDir(dir)
+      if (mkdirError) throw new Error(`创建下载目录失败：${mkdirError}`)
     }
     if (task.status != 'run') return
     const filePath = `${dir}/${task.metadata.fileName}`

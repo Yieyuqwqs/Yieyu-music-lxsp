@@ -6,6 +6,15 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-75 - 2026-11-28
+
+### 修复
+
+- 换源链路（直链/封面/歌词）失败原因被 `console.log` 吞掉，用户只看到泛泛的「换源失败」→ 现在汇总抛出（带音源与错误码）
+- 多源搜索全部失败时返回空列表（看着像「没有结果」）→ 现在抛 `AllSourcesFailedError`
+- 下载目录静默回退：公共目录不可写时用户找不到文件 → 回退原因显示在下载页；Android 13+ 不再申请失效的 WRITE_EXTERNAL_STORAGE
+- 按歌手建子目录失败被 `catch {}` 吞掉 → 现在带原因抛错
+- 同步鉴权的 `JSON.parse(msg)` 裸奔 → 坏数据走 authFailed 并记日志
 ## 1.9-Aurora-74 - 2026-11-27
 
 ### 修复

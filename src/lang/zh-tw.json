@@ -280,6 +280,7 @@
   "recognize_secret": "access_secret",
   "recognize_start": "開始識曲（錄音 8 秒）",
   "search__welcome": "搜我所想~~😉",
+  "search_all_failed": "所有音源搜尋失敗",
   "search_history_search": "歷史搜尋",
   "search_hot_search": "熱門搜尋",
   "search_mv": "搜尋 MV（B站）",

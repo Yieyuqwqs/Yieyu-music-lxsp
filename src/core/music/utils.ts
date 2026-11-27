@@ -12,6 +12,7 @@ import { requestMsg } from '@/utils/message'
 import BackgroundTimer from 'react-native-background-timer'
 import { apis } from '@/utils/musicSdk/api-source'
 import { getQualityCandidates } from '@/config/quality'
+import { toAttemptFailure, throwAttempts, type AttemptFailure } from '@/utils/attemptErrors'
 import { rememberSource, preferRememberedSource } from '@/core/sourceMemory'
 
 
@@ -241,12 +242,14 @@ export const getPlayQuality = (settingQuality: LX.QualitySetting, musicInfo: LX.
   return candidates[0] ?? '128k'
 }
 
-export const getOnlineOtherSourceMusicUrl = async({ musicInfos, quality, onToggleSource, isRefresh, retryedSource = [] }: {
+export const getOnlineOtherSourceMusicUrl = async({ musicInfos, quality, onToggleSource, isRefresh, retryedSource = [], attempts = [] }: {
   musicInfos: LX.Music.MusicInfoOnline[]
   quality?: LX.QualitySetting
   onToggleSource: (musicInfo?: LX.Music.MusicInfoOnline) => void
   isRefresh: boolean
   retryedSource?: LX.OnlineSource[]
+  /** 已经失败过的源（每一层的真实原因，最终汇总抛给 UI） */
+  attempts?: AttemptFailure[]
 }): Promise<{
   url: string
   musicInfo: LX.Music.MusicInfoOnline
@@ -269,7 +272,10 @@ export const getOnlineOtherSourceMusicUrl = async({ musicInfos, quality, onToggl
     onToggleSource(musicInfo)
     break
   }
-  if (!musicInfo || !itemQuality) throw new Error(global.i18n.t('toggle_source_failed'))
+  if (!musicInfo || !itemQuality) {
+    // 候选全试完了：把每个源的真实原因一起抛出去（旧实现只留一句"换源失败"）
+    throwAttempts(global.i18n.t('toggle_source_failed'), attempts)
+  }
 
   const cachedUrl = await getStoreMusicUrl(musicInfo, itemQuality)
   if (cachedUrl && !isRefresh) return { url: cachedUrl, musicInfo, quality: itemQuality, isFromCache: true }
@@ -288,8 +294,9 @@ export const getOnlineOtherSourceMusicUrl = async({ musicInfos, quality, onToggl
     // eslint-disable-next-line @typescript-eslint/promise-function-async
   }).catch((err: any) => {
     if (err.message == requestMsg.tooManyRequests) throw err
-    console.log(err)
-    return getOnlineOtherSourceMusicUrl({ musicInfos, quality, onToggleSource, isRefresh, retryedSource })
+    // 记下这一路的真实原因再换下一个源，绝不 console.log 之后就扔掉
+    attempts.push(toAttemptFailure(musicInfo!.source, err))
+    return getOnlineOtherSourceMusicUrl({ musicInfos, quality, onToggleSource, isRefresh, retryedSource, attempts })
   })
 }
 
@@ -322,8 +329,8 @@ export const handleGetOnlineMusicUrl = async({ musicInfo, quality, onToggleSourc
     rememberSource(musicInfo)
     return { musicInfo, url, quality: type, isFromCache: false }
   }).catch(async(err: any) => {
-    console.log(err)
     if (!allowToggleSource || err.message == requestMsg.tooManyRequests) throw err
+    const firstFailure = toAttemptFailure(musicInfo.source, err)
     onToggleSource()
     // eslint-disable-next-line @typescript-eslint/promise-function-async
     return getOtherSource(musicInfo).then(otherSource => {
@@ -335,19 +342,23 @@ export const handleGetOnlineMusicUrl = async({ musicInfo, quality, onToggleSourc
           quality,
           isRefresh,
           retryedSource: [musicInfo.source],
+          attempts: [firstFailure],
         })
       }
-      throw err
+      // 连「其它源」都没有：原样抛回首个错误（保持既有文案与 tooManyRequests 特判）
+      throwAttempts(global.i18n.t('toggle_source_failed'), [firstFailure], err)
     })
   })
 }
 
 
-export const getOnlineOtherSourcePicUrl = async({ musicInfos, onToggleSource, isRefresh, retryedSource = [] }: {
+export const getOnlineOtherSourcePicUrl = async({ musicInfos, onToggleSource, isRefresh, retryedSource = [], attempts = [] }: {
   musicInfos: LX.Music.MusicInfoOnline[]
   onToggleSource: (musicInfo?: LX.Music.MusicInfoOnline) => void
   isRefresh: boolean
   retryedSource?: LX.OnlineSource[]
+  /** 已经失败过的源（每一层的真实原因，最终汇总抛给 UI） */
+  attempts?: AttemptFailure[]
 }): Promise<{
   url: string
   musicInfo: LX.Music.MusicInfoOnline
@@ -363,7 +374,7 @@ export const getOnlineOtherSourcePicUrl = async({ musicInfos, onToggleSource, is
     onToggleSource(musicInfo)
     break
   }
-  if (!musicInfo) throw new Error(global.i18n.t('toggle_source_failed'))
+  if (!musicInfo) throwAttempts(global.i18n.t('toggle_source_failed'), attempts)
 
   if (musicInfo.meta.picUrl && !isRefresh) return { musicInfo, url: musicInfo.meta.picUrl, isFromCache: true }
 
@@ -378,8 +389,8 @@ export const getOnlineOtherSourcePicUrl = async({ musicInfos, onToggleSource, is
     return { musicInfo, url, isFromCache: false }
     // eslint-disable-next-line @typescript-eslint/promise-function-async
   }).catch((err: any) => {
-    console.log(err)
-    return getOnlineOtherSourcePicUrl({ musicInfos, onToggleSource, isRefresh, retryedSource })
+    attempts.push(toAttemptFailure(musicInfo!.source, err))
+    return getOnlineOtherSourcePicUrl({ musicInfos, onToggleSource, isRefresh, retryedSource, attempts })
   })
 }
 
@@ -406,8 +417,8 @@ export const handleGetOnlinePicUrl = async({ musicInfo, isRefresh, onToggleSourc
   return reqPromise.then((url: string) => {
     return { musicInfo, url, isFromCache: false }
   }).catch(async(err: any) => {
-    console.log(err)
     if (!allowToggleSource) throw err
+    const firstFailure = toAttemptFailure(musicInfo.source, err)
     onToggleSource()
     // eslint-disable-next-line @typescript-eslint/promise-function-async
     return getOtherSource(musicInfo).then(otherSource => {
@@ -418,19 +429,22 @@ export const handleGetOnlinePicUrl = async({ musicInfo, isRefresh, onToggleSourc
           onToggleSource,
           isRefresh,
           retryedSource: [musicInfo.source],
+          attempts: [firstFailure],
         })
       }
-      throw err
+      throwAttempts(global.i18n.t('toggle_source_failed'), [firstFailure], err)
     })
   })
 }
 
 
-export const getOnlineOtherSourceLyricInfo = async({ musicInfos, onToggleSource, isRefresh, retryedSource = [] }: {
+export const getOnlineOtherSourceLyricInfo = async({ musicInfos, onToggleSource, isRefresh, retryedSource = [], attempts = [] }: {
   musicInfos: LX.Music.MusicInfoOnline[]
   onToggleSource: (musicInfo?: LX.Music.MusicInfoOnline) => void
   isRefresh: boolean
   retryedSource?: LX.OnlineSource[]
+  /** 已经失败过的源（每一层的真实原因，最终汇总抛给 UI） */
+  attempts?: AttemptFailure[]
 }): Promise<{
   lyricInfo: LX.Music.LyricInfo | LX.Player.LyricInfo
   musicInfo: LX.Music.MusicInfoOnline
@@ -446,7 +460,7 @@ export const getOnlineOtherSourceLyricInfo = async({ musicInfos, onToggleSource,
     onToggleSource(musicInfo)
     break
   }
-  if (!musicInfo) throw new Error(global.i18n.t('toggle_source_failed'))
+  if (!musicInfo) throwAttempts(global.i18n.t('toggle_source_failed'), attempts)
 
   if (!isRefresh) {
     const lyricInfo = await getCachedLyricInfo(musicInfo)
@@ -465,11 +479,11 @@ export const getOnlineOtherSourceLyricInfo = async({ musicInfos, onToggleSource,
       lyricInfo,
       musicInfo,
       isFromCache: false,
-    } : Promise.reject(new Error('failed'))
+    } : Promise.reject(new Error('歌词为空或没有时间轴'))
     // eslint-disable-next-line @typescript-eslint/promise-function-async
   }).catch((err: any) => {
-    console.log(err)
-    return getOnlineOtherSourceLyricInfo({ musicInfos, onToggleSource, isRefresh, retryedSource })
+    attempts.push(toAttemptFailure(musicInfo!.source, err))
+    return getOnlineOtherSourceLyricInfo({ musicInfos, onToggleSource, isRefresh, retryedSource, attempts })
   })
 }
 
@@ -498,11 +512,11 @@ export const handleGetOnlineLyricInfo = async({ musicInfo, onToggleSource, isRef
       musicInfo,
       lyricInfo,
       isFromCache: false,
-    } : Promise.reject(new Error('failed'))
+    } : Promise.reject(new Error('歌词为空或没有时间轴'))
   }).catch(async(err: any) => {
-    console.log(err)
     if (!allowToggleSource) throw err
 
+    const firstFailure = toAttemptFailure(musicInfo.source, err)
     onToggleSource()
     // eslint-disable-next-line @typescript-eslint/promise-function-async
     return getOtherSource(musicInfo).then(otherSource => {
@@ -513,9 +527,10 @@ export const handleGetOnlineLyricInfo = async({ musicInfo, onToggleSource, isRef
           onToggleSource,
           isRefresh,
           retryedSource: [musicInfo.source],
+          attempts: [firstFailure],
         })
       }
-      throw err
+      throwAttempts(global.i18n.t('toggle_source_failed'), [firstFailure], err)
     })
   })
 }

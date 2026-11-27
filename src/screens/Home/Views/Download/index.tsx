@@ -11,6 +11,7 @@ import { useDownloadList } from '@/store/downloadList/hook'
 import downloadState from '@/store/downloadList/state'
 import {
   clearCompletedTasks,
+  getSaveDirNotice,
   pauseAllTasks,
   pauseTask,
   removeTasks,
@@ -273,9 +274,17 @@ export default () => {
         }
         ListFooterComponent={
           saveDir
-            ? <TouchableOpacity onPress={() => { clipboardWriteText(saveDir); toast(t('download_page_copy_path_tip')) }}>
-                <Text size={11} color={theme['c-font-label']} style={styles.saveDir} numberOfLines={2}>{t('download_save_dir', { path: saveDir })}</Text>
-              </TouchableOpacity>
+            ? <View>
+                <TouchableOpacity onPress={() => { clipboardWriteText(saveDir); toast(t('download_page_copy_path_tip')) }}>
+                  <Text size={11} color={theme['c-font-label']} style={styles.saveDir} numberOfLines={2}>{t('download_save_dir', { path: saveDir })}</Text>
+                </TouchableOpacity>
+                {
+                  // 静默回退是 bug：公共目录写不进去时必须让人看见原因，否则只会"下载成功但找不到文件"
+                  getSaveDirNotice()
+                    ? <Text size={10} color={theme['c-font-label']} style={styles.saveDir} numberOfLines={3}>{getSaveDirNotice()}</Text>
+                    : null
+                }
+              </View>
             : null
         }
       />

@@ -67,7 +67,14 @@ const codeAuth = async(urlInfo: LX.Sync.UrlInfo, serverId: string, authCode: str
     }
     // console.log(msg)
     if (!msg) return Promise.reject(new Error(SYNC_CODE.authFailed))
-    const info = JSON.parse(msg) as LX.Sync.KeyInfo
+    // 服务端回的解密内容不可信：坏 JSON 以前会以 SyntaxError 冒到上层，用户只看到"同步失败"
+    let info: LX.Sync.KeyInfo
+    try {
+      info = JSON.parse(msg) as LX.Sync.KeyInfo
+    } catch (error) {
+      log.error('[auth] codeAuth parseMsg error', (error as Error).message)
+      throw new Error(SYNC_CODE.authFailed)
+    }
     void setSyncAuthKey(serverId, info)
     return info
   })
