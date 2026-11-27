@@ -38,10 +38,10 @@
     },
     {
       "id": "apk-release-verified",
-      "claim": "APK 构建与发版已闭环：CI 构建成功、两个 Release 各 5 个客户端包、公库清单指向 Aurora-75/80",
+      "claim": "APK 构建与发版闭环：CI 构建成功、两个 Release 各 5 个客户端包、公库清单指向当前版本（Aurora-76/81）",
       "source": "实测",
       "evidence": [
-        "Actions run 46032791420（Build APK success）",
+        "Actions run 46076699102（Build APK success）",
         "gh api /repos/Yieyuqwqs/Yieyu-Update/contents/update.json"
       ]
     },
