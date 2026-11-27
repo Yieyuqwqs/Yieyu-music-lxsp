@@ -1,6 +1,13 @@
-module.exports = {
-  presets: ['module:@react-native/babel-preset'],
-  plugins: [
+module.exports = (api) => {
+  api.cache(true)
+  // Metro 在 release（--dev false）时 caller.isDev === false；只有那时才裁 console
+  const isDev = api.caller((caller) => !!(caller && caller.isDev))
+
+  return {
+    presets: ['module:@react-native/babel-preset'],
+    plugins: [
+      // 必须在最前：先裁 console，后续插件就不用再处理这些节点
+      ...(isDev ? [] : [require('./plugins/strip-console.cjs')]),
     '@babel/plugin-proposal-export-namespace-from',
     [
       'module-resolver',
@@ -32,7 +39,8 @@ module.exports = {
         },
       },
     ],
-    // 必须在最后：worklet 转换要看到已解析的模块路径
-    'react-native-reanimated/plugin',
-  ],
+      // 必须在最后：worklet 转换要看到已解析的模块路径
+      'react-native-reanimated/plugin',
+    ],
+  }
 }

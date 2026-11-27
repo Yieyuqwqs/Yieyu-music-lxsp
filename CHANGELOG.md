@@ -6,6 +6,15 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-78 - 2026-11-28
+
+### 优化
+
+- 生产构建经 Babel 插件裁掉 `console.log/info/debug/trace`（`warn/error` 保留），dev 构建行为不变
+
+### 修复
+
+- 「启动自动播放」在恢复上次播放时被无条件 `pause` 覆盖（现由设置直接决定 play/pause）
 ## 1.9-Aurora-77 - 2026-11-28
 
 ### 新增

@@ -161,8 +161,11 @@ const handlePlayMusic = async(musicInfo: LX.Player.PlayMusic, url: string, time:
     if (!isTempTrack(track.id as string)) {
       if (time) await TrackPlayer.seekTo(time)
       if (global.lx.restorePlayInfo) {
-        await TrackPlayer.pause()
-        // 已知限制 2（docs/KNOWN-LIMITATIONS.md）：player.startupAutoPlay 尚未接入恢复播放分支
+        // 恢复上次播放：开没开「启动自动播放」在这里必须说了算。
+        // 以前这里无条件 pause，只能等启动流程里的 setTimeout(play) 兜回来 —— 顺序一变就变成"永远不播"。
+        const startupAutoPlay = settingState.setting['player.startupAutoPlay'] === true
+        if (startupAutoPlay) await TrackPlayer.play()
+        else await TrackPlayer.pause()
         global.lx.restorePlayInfo = null
       } else {
         await TrackPlayer.play()

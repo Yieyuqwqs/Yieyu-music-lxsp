@@ -1,7 +1,7 @@
 {
   "name": "Yieyu-music-mobile",
-  "version": "1.9-Aurora-77",
-  "versionCode": 82,
+  "version": "1.9-Aurora-78",
+  "versionCode": 83,
   "private": true,
   "scripts": {
     "dev": "react-native run-android --active-arch-only",
