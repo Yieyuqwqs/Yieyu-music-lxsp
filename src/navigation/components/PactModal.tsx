@@ -18,10 +18,10 @@ const Content = () => {
   const theme = useTheme()
 
   const openHomePage = () => {
-    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music')
+    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music-lxsp')
   }
   const openLicensePage = () => {
-    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music/blob/main/LICENSE')
+    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music-lxsp/blob/main/LICENSE')
   }
 
   const textLinkStyle = {

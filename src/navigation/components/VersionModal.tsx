@@ -237,9 +237,9 @@ const VersionModal = ({ componentId }: { componentId: string }) => {
         downloadUpdate()
         break
       case 'force':
-        void openUrl(guard.downloadUrl || UPDATE_DOWNLOAD_URL).catch(() => {
-          void openUrl(UPDATE_DOWNLOAD_URL)
-        })
+        // 强制更新也走 App 内下载：github.com 的下载页在国内经常打不开，
+        // 这里直接用国内加速地址拉 APK（见 utils/ghMirror）
+        downloadUpdate(guard.latestVersion || undefined)
         break
       default:
         break

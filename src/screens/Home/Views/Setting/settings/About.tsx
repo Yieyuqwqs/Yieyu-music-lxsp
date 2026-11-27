@@ -54,13 +54,13 @@ export default memo(() => {
     void getDeviceCode()
   }, [])
   const openHomePage = () => {
-    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music')
+    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music-lxsp')
   }
   const openIssuePage = () => {
-    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music/issues')
+    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music-lxsp/issues')
   }
   const openGHReleasePage = () => {
-    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music/releases/latest')
+    void openUrl('https://github.com/Yieyuqwqs/Yieyu-Update/releases/latest')
   }
   const handleCheckUpdate = () => {
     void checkAndInstallUpdate().catch((err: Error) => {
@@ -68,16 +68,16 @@ export default memo(() => {
     })
   }
   const openFAQPage = () => {
-    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music/blob/main/FAQ.md')
+    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music-lxsp/blob/main/FAQ.md')
   }
   // const openIssuesPage = () => {
-  //   openUrl('https://github.com/Yieyuqwqs/Yieyu-music/issues')
+  //   openUrl('https://github.com/Yieyuqwqs/Yieyu-music-lxsp/issues')
   // }
   const openPactModal = () => {
     showPactModal()
   }
   const openPartPage = () => {
-    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music/blob/main/LICENSE')
+    void openUrl('https://github.com/Yieyuqwqs/Yieyu-music-lxsp/blob/main/LICENSE')
   }
 
   // const goToQQGroup = () => {
@@ -117,7 +117,7 @@ export default memo(() => {
       <View style={styles.part}>
         <Text style={styles.text} >本软件完全免费，代码已开源。开源地址：</Text>
         <TouchableOpacity onPress={openHomePage}>
-          <Text style={textLinkStyle}>https://github.com/Yieyuqwqs/Yieyu-music</Text>
+          <Text style={textLinkStyle}>https://github.com/Yieyuqwqs/Yieyu-music-lxsp</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.part}>

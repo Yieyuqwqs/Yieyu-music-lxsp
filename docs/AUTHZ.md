@@ -11,7 +11,7 @@
 
 | 链路 | 归谁管 | 落点 |
 | --- | --- | --- |
-| 认设备 | 管理员（云端白名单） | `Yieyu-music-lxsp/whitelist.json`（公开仓库，只有 HMAC 后的条目键） |
+| 认设备 | 管理员（云端白名单） | `Yieyu-Update/whitelist.json`（公开仓库，只有 HMAC 后的条目键） |
 | 认人 | 用户手机（系统指纹） | Android Keystore 加密令牌，锁屏即熔断 |
 
 ## 1. 设备码
@@ -45,7 +45,7 @@ seed      = "and|" + 包名 + "|" + ANDROID_ID + "|" + Build.MANUFACTURER + "|" 
 }
 ```
 
-`exp: null` = 永久。`Yieyu-music-lxsp/blacklist.json` 形状不变（`keys` 里放的也是条目键），`keys` 里放的也是条目键。
+`exp: null` = 永久。`Yieyu-Update/blacklist.json` 形状不变（`keys` 里放的也是条目键），`keys` 里放的也是条目键。
 
 ## 3. 本机令牌（Keystore）
 
@@ -113,8 +113,8 @@ payload = "YIEYU-AUTH|v4|dev=<设备码>|exp=<YYYYMMDD|20991231>"
 1. GitHub Secrets 增加 `AUTHZ_SECRET_B64`（客户端与管理端共用）：
    `node scripts/write-authz-secret.js --gen` 生成，只显示一次。
 2. 老用户手上 16 位卡密**全部作废**，让他们发新设备码。
-3. 名单仓库必须是**公开**仓库（`src/config/authz.ts` 的 `AUTHZ_REPO`，默认 `Yieyu-music-lxsp`）；
-   私有仓库（如老的 `Yieyu-music`）匿名拉不到，客户端会一直「未授权」。
+3. 名单仓库必须是**公开**仓库（`src/config/authz.ts` 的 `AUTHZ_REPO`，默认 `Yieyu-Update`）；
+   私有仓库（`Yieyu-music`、`Yieyu-music-lxsp`）匿名拉不到，客户端会一直「未授权」。
 4. 开通：管理端填设备码 + 时长 → 写 `whitelist.json` → 用户在客户端点「刷新授权状态」→ 自动弹指纹。
 5. 换机：管理端「移除该设备」+「开通」新设备码；或用户老机器导出迁移码给新机器粘贴。
 6. 封禁：管理端「封禁该设备」（写 `blacklist.json`）。客户端联网即锁死。

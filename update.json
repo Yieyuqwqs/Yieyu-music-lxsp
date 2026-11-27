@@ -1,8 +1,8 @@
 {
-  "minSupportedVersion": "1.9-Aurora-63",
-  "latestVersion": "1.9-Aurora-63",
+  "minSupportedVersion": "1.9-Aurora-64",
+  "latestVersion": "1.9-Aurora-64",
   "downloadUrl": "https://github.com/Yieyuqwqs/Yieyu-music/releases/latest",
-  "message": "卡密全部作废：改为「设备码 + 本机指纹」授权。把设备码发给管理员开通，绑定指纹后使用；锁屏后需要重新验证指纹。",
-  "versionCode": 68,
-  "minVersionCode": 68
+  "message": "修复「软件更新」卡死：检查更新改走国内可直连的镜像，下载走加速地址；强制更新也改为 App 内下载。",
+  "versionCode": 69,
+  "minVersionCode": 69
 }

@@ -21,8 +21,9 @@ import {
 import authzNative from '@/utils/nativeModules/authz'
 import {
   AUTHZ_BLACKLIST_FILE, AUTHZ_CLOCK_TOLERANCE, AUTHZ_REFRESH_INTERVAL, AUTHZ_SOURCE_TIMEOUT,
-  AUTHZ_SYNC_TIMEOUT, AUTHZ_USED_MIGRATION_LIMIT, AUTHZ_WHITELIST_FILE, authzSources,
+  AUTHZ_SYNC_TIMEOUT, AUTHZ_USED_MIGRATION_LIMIT, AUTHZ_WHITELIST_FILE, authzFileUrl, authzRawUrl,
 } from '@/config/authz'
+import { ghFetchRawText } from '@/utils/ghMirror'
 import { LICENSE_PUBLIC_KEY } from '@/config/licenseKey'
 import { rsaVerify } from '@/utils/rsa'
 import { navigations } from '@/navigation'
@@ -66,29 +67,28 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, tip = 'timeout'): Promi
 
 /* --------------------------- 云端清单（多源并发） --------------------------- */
 
-const fetchText = async(source: { url: string, headers?: Record<string, string> }): Promise<string> => {
-  const url = source.url + (source.url.includes('?') ? '&' : '?') + 't=' + Date.now()
-  const res = await withTimeout(fetch(url, {
-    headers: { 'User-Agent': 'Yieyu-music', ...(source.headers || {}) },
-  }), AUTHZ_SOURCE_TIMEOUT)
-  if (!res.ok) throw new Error('HTTP ' + res.status)
-  return withTimeout(res.text(), AUTHZ_SOURCE_TIMEOUT)
-}
-
-/** 同一份文件的多源并发拉取，取 updatedAt 最新的一份（镜像同步时间不一致） */
+/**
+ * 拉一份云端清单：contents API（国内最稳）→ 反代 → 直连，全部带硬超时，
+ * 候选并发赛跑（细节在 utils/ghMirror）。
+ *
+ * 旧实现是「每个源各发一次、等全部返回」，raw 一卡就整体拖到超时；
+ * 现在任何一个候选先返回就用，其余立刻被忽略。
+ */
 const pullList = async <T extends { updatedAt: number }>(
   file: string,
   parse: (text: string) => T | null,
 ): Promise<T | null> => {
-  const texts = await Promise.all(authzSources(file).map(source => fetchText(source).catch(() => null)))
-  let best: T | null = null
-  for (const text of texts) {
-    if (!text) continue
-    const parsed = parse(text)
-    if (!parsed) continue
-    if (!best || parsed.updatedAt > best.updatedAt) best = parsed
+  const urls = [authzFileUrl(file), authzRawUrl(file)]
+  for (const url of urls) {
+    try {
+      const text = await withTimeout(ghFetchRawText(url, { timeoutMs: AUTHZ_SOURCE_TIMEOUT }), AUTHZ_SYNC_TIMEOUT)
+      const parsed = parse(text)
+      if (parsed) return parsed
+    } catch (error) {
+      // 换下一种读法
+    }
   }
-  return best
+  return null
 }
 
 const readCloudCache = async() => {
