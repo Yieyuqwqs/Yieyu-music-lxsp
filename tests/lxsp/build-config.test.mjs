@@ -58,7 +58,23 @@ export default (t) => {
     const config = mod.default ?? mod
     t.ok(exists('babel.config.js'), 'babel 配置必须存在')
 
-    const build = (isDev) => config({ cache: () => {}, caller: (fn) => fn({ isDev }) })
+    // 关键：假 api 必须复刻 Babel 的真实约束（caller 必须在缓存配置之前），
+    // 否则「顺序写反导致 release 构建失败」这种事故本地测不出来（Aurora-78 第一次构建就是这么挂的）
+    const build = (isDev) => {
+      let cacheConfigured = false
+      const configure = () => { cacheConfigured = true }
+      const cache = () => configure()
+      cache.using = (fn) => { configure(); if (fn) fn() }
+      cache.forever = configure
+      cache.never = configure
+      return config({
+        cache,
+        caller: (fn) => {
+          if (cacheConfigured) throw new Error('Caching has already been configured with .never or .forever()')
+          return fn({ isDev })
+        },
+      })
+    }
     const dev = build(true)
     const release = build(false)
     t.ok(!dev.plugins.some(p => typeof p === 'function'), 'dev 构建不许裁 console（调试要看日志）')

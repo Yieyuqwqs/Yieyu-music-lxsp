@@ -1,7 +1,9 @@
 module.exports = (api) => {
-  api.cache(true)
-  // Metro 在 release（--dev false）时 caller.isDev === false；只有那时才裁 console
+  // 顺序不能反：Babel 规定 caller() 必须在配置缓存之前调用，
+  // 否则报 "Caching has already been configured with .never or .forever()"（构建会直接失败）。
+  // Metro 在 release（--dev false）时 caller.isDev === false；只有那时才裁 console。
   const isDev = api.caller((caller) => !!(caller && caller.isDev))
+  api.cache.using(() => isDev)
 
   return {
     presets: ['module:@react-native/babel-preset'],
