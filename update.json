@@ -1,8 +1,8 @@
 {
   "minSupportedVersion": "1.9-Aurora-64",
-  "latestVersion": "1.9-Aurora-71",
+  "latestVersion": "1.9-Aurora-72",
   "downloadUrl": "https://github.com/Yieyuqwqs/Yieyu-music/releases/latest",
-  "message": "设备码不再手抄：客户端只填 QQ，生成申请码自带设备码；管理端按 QQ 开通/移除/封禁。",
-  "versionCode": 76,
+  "message": "管理端去掉设备码栏（解析申请码自动带出）；云端读写加缓存与重试，操作明显更快。",
+  "versionCode": 77,
   "minVersionCode": 69
 }

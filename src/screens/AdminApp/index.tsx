@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert, Image, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native'
@@ -40,7 +40,7 @@ const ghFetch = async(token: string, path: string, init?: any) => withTimeout(fe
     'User-Agent': 'Yieyu-Admin',
     ...(init && init.body ? { 'Content-Type': 'application/json' } : {}),
   },
-}), 15000)
+}), 12000)
 
 // 管理员口令的 sha256（源码里看不到明文）
 // 当前口令：ts1cf5@.  （结尾有一个点）
@@ -108,7 +108,6 @@ const AdminApp = memo(() => {
   const [requestRaw, setRequestRaw] = useState('')
   const [request, setRequest] = useState<{ qq: string, nick: string, code: string, ts: number, bodyHex: string, macHex: string } | null>(null)
   const [requestBusy, setRequestBusy] = useState(false)
-  const [showManualCode, setShowManualCode] = useState(false)
   const [listTip, setListTip] = useState('')
 
   // ---------------------------------------------------------------- 登录
@@ -175,14 +174,35 @@ const AdminApp = memo(() => {
     }
   }, [token])
 
-  const loadFile = useCallback(async(file: string): Promise<{ json: any, sha: string } | null> => {
+  /**
+   * 读云端文件（带内存缓存）。
+   *
+   * 管理端一次操作本来要 GET + PUT 两趟，每次往返 1~9 秒（国内直连 api.github.com 就这速度）。
+   * 缓存 sha 之后，连续操作只要 PUT 一趟；写成功也会把新 sha 写回缓存。
+   */
+  const fileCache = useRef<Record<string, { sha: string, json: any, at: number }>>({})
+
+  const loadFile = useCallback(async(file: string, force = false): Promise<{ json: any, sha: string } | null> => {
     if (!token) throw new Error('请先保存 GitHub Token')
-    const res = await ghFetch(token, `/repos/${OWNER}/${REPO}/contents/${file}?ref=${BRANCH}`)
-    if (res.status === 404) return null
-    if (!res.ok) throw new Error('读取 ' + file + ' 失败：HTTP ' + res.status)
-    const data = await res.json()
-    const text = Buffer.from(String(data.content ?? '').replace(/\s/g, ''), 'base64').toString('utf8')
-    return { json: JSON.parse(text), sha: data.sha as string }
+    const cached = fileCache.current[file]
+    if (!force && cached && Date.now() - cached.at < 60000) return { json: cached.json, sha: cached.sha }
+
+    let lastError: any = null
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await ghFetch(token, `/repos/${OWNER}/${REPO}/contents/${file}?ref=${BRANCH}`)
+        if (res.status === 404) { delete fileCache.current[file]; return null }
+        if (!res.ok) throw new Error('读取 ' + file + ' 失败：HTTP ' + res.status)
+        const data = await res.json()
+        const text = Buffer.from(String(data.content ?? '').replace(/\s/g, ''), 'base64').toString('utf8')
+        const json = JSON.parse(text)
+        fileCache.current[file] = { sha: data.sha as string, json, at: Date.now() }
+        return { json, sha: data.sha as string }
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError ?? new Error('读取 ' + file + ' 失败')
   }, [token])
 
   /**
@@ -204,7 +224,11 @@ const AdminApp = memo(() => {
         method: 'PUT',
         body: JSON.stringify(body),
       })
-      if (res.ok) return
+      if (res.ok) {
+        const data = await res.json().catch(() => null)
+        fileCache.current[file] = { sha: String(data?.content?.sha ?? ''), json: payload, at: Date.now() }
+        return
+      }
       const text = await res.text()
       lastError = 'HTTP ' + res.status + ' ' + text.slice(0, 120)
       // 409 = sha 过期；404 = 文件不存在（下次不带 sha 新建）
@@ -235,8 +259,8 @@ const AdminApp = memo(() => {
     setListTip('正在拉取云端名单…')
     try {
       const [white, black] = await Promise.all([
-        loadFile(WHITELIST_FILE).catch(() => null),
-        loadFile(BLACKLIST_FILE).catch(() => null),
+        loadFile(WHITELIST_FILE, true).catch(() => null),
+        loadFile(BLACKLIST_FILE, true).catch(() => null),
       ])
       const whiteDevices = Array.isArray(white?.json?.devices) ? white!.json.devices as WhitelistEntry[] : []
       setDevices(whiteDevices.filter(item => item && typeof item.k === 'string'))
@@ -259,7 +283,7 @@ const AdminApp = memo(() => {
 
   const validateInput = useCallback((): string | null => {
     const device = normalizeCode(deviceCode)
-    if (!device) { Alert.alert('提示', '请先填写用户提供的设备码'); return null }
+    if (!device) { Alert.alert('提示', '请先在下面「授权申请」里粘贴并解析用户的申请码（设备码会自动带出）'); return null }
     if (device.length < 16) { Alert.alert('提示', '设备码看起来不完整（应为 16 位，如 AB12-CD34-EF56-7890）'); return null }
     if (days === -1 && (!effectiveDays || effectiveDays <= 0)) { Alert.alert('提示', '请输入有效的天数'); return null }
     return device
@@ -624,30 +648,7 @@ const AdminApp = memo(() => {
           <Text style={styles.dangerText}>本 APK 含 RSA 私钥与白名单写权限，不要分享给任何人。</Text>
         </View>
 
-        <Text style={styles.label}>设备码</Text>
-        <View style={[styles.inputBox, { backgroundColor: '#101318' }]}>
-          <Text selectable style={[styles.input, { color: deviceCode ? '#7ee787' : '#5a6270', fontFamily: 'monospace' }]}>
-            {deviceCode || '（解析下面的申请码后自动填）'}
-          </Text>
-        </View>
-        <Pressable onPress={() => setShowManualCode(v => !v)} style={({ pressed }) => [pressed && styles.pressed]}>
-          <Text style={styles.hint}>{showManualCode ? '收起手动填设备码' : '高级：手动填设备码（一般不用，申请码里自带）'}</Text>
-        </Pressable>
-        {showManualCode
-          ? (
-            <View style={styles.inputBox}>
-              <TextInput
-                value={deviceCode}
-                onChangeText={setDeviceCode}
-                placeholder="AB12-CD34-EF56-7890"
-                placeholderTextColor="#5a6270"
-                autoCapitalize="characters"
-                autoCorrect={false}
-                style={styles.input}
-              />
-            </View>
-          )
-          : null}
+        <Text style={styles.hint}>设备码不用填：解析申请码时自动带出（授权只认 QQ + 申请码）。</Text>
 
         <Text style={styles.label}>用户 QQ 号（开通时填 → 以后按 QQ 认人/封禁）</Text>
         <View style={styles.inputBox}>
