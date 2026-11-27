@@ -31,18 +31,50 @@ const message = String(ver.message || '').trim() || String(ver.desc || '')
   .filter(Boolean)
   .join(' · ')
 
-const manifest = {
-  minSupportedVersion: version,
-  latestVersion: version,
-  downloadUrl: `https://github.com/${owner}/${repo}/releases/latest`,
-  message,
-  versionCode,
-  minVersionCode: versionCode,
+/**
+ * SOFT_RELEASE=1：软发布 —— 只把 latestVersion 顶到新版本，
+ * minSupportedVersion 沿用线上现值（不强制老用户升级）。
+ *
+ * 为什么需要：Aurora-63 及以前的强更弹窗只会打开 github.com 的下载页，
+ * 国内打不开 → 一旦把 minSupportedVersion 顶上去，老用户会被锁死在弹窗上。
+ */
+const softRelease = process.env.SOFT_RELEASE === '1'
+
+const readLiveManifest = async () => {
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/main/update.json`
+  const res = await fetch(url, { headers: { 'User-Agent': 'Yieyu-music-release' } })
+  if (!res.ok) throw new Error('读取线上 update.json 失败：HTTP ' + res.status)
+  return res.json()
 }
 
-const json = JSON.stringify(manifest, null, 2) + '\n'
-if (out === '-') process.stdout.write(json)
-else {
-  fs.writeFileSync(out, json)
-  process.stderr.write(`wrote ${out}: ${version} / ${versionCode} -> ${manifest.downloadUrl}\n`)
+const build = async () => {
+  let minSupportedVersion = version
+  let minVersionCode = versionCode
+  if (softRelease) {
+    const live = await readLiveManifest()
+    if (live && live.minSupportedVersion) minSupportedVersion = String(live.minSupportedVersion)
+    if (live && Number.isFinite(Number(live.minVersionCode))) minVersionCode = Number(live.minVersionCode)
+    process.stderr.write(`[soft] 保留最低版本 ${minSupportedVersion} / ${minVersionCode}\n`)
+  }
+
+  const manifest = {
+    minSupportedVersion,
+    latestVersion: version,
+    downloadUrl: `https://github.com/${owner}/${repo}/releases/latest`,
+    message,
+    versionCode,
+    minVersionCode,
+  }
+
+  const json = JSON.stringify(manifest, null, 2) + '\n'
+  if (out === '-') process.stdout.write(json)
+  else {
+    fs.writeFileSync(out, json)
+    process.stderr.write(`wrote ${out}: ${version} / ${versionCode} -> ${manifest.downloadUrl}\n`)
+  }
 }
+
+void build().catch(error => {
+  process.stderr.write(String(error?.message ?? error) + '\n')
+  process.exit(1)
+})

@@ -133,15 +133,17 @@ jobs:
       # update.json 推到公开只读仓库 Yieyu-Update。顺序不能反：先传包，最后推清单，
       # 这样客户端从清单里拿到的下载地址永远已经存在。
       - name: Publish to public update repo (Yieyu-Update)
-        # ⚠️ 只有主仓库自动发版：旧客户端（Aurora-63 及以前）的强更弹窗只认 github.com 下载页，
-        # 国内打不开 → 自动把 minSupportedVersion 顶上去会把老用户直接锁死。
-        # 过渡期的包由维护者手动发到 Yieyu-Update，并把 latestVersion 顶上去、minSupportedVersion 保持旧值。
-        if: ${{ github.repository == 'Yieyuqwqs/Yieyu-music' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
+        # 源码仓库（Yieyu-music / Yieyu-music-lxsp）都能把包发到公开更新仓库 Yieyu-Update。
+        # SOFT_RELEASE=1：只顶 latestVersion，不动 minSupportedVersion —— 旧客户端（≤Aurora-63）
+        # 的强更弹窗只会打开 github.com 下载页，国内打不开，硬顶会把老用户锁死。
+        if: ${{ (github.repository == 'Yieyuqwqs/Yieyu-music' || github.repository == 'Yieyuqwqs/Yieyu-music-lxsp') && github.ref == 'refs/heads/main' }}
         shell: bash
         env:
           # 需要一个能写 Yieyu-Update 的 PAT（repo 权限足够；建议换成只授权该仓库的 fine-grained token）
           GH_TOKEN: ${{ secrets.UPDATE_REPO_TOKEN }}
           PUBLIC_REPO: Yieyuqwqs/Yieyu-Update
+          # 过渡期：软发布（不强制老版本升级）。等存量用户基本换到 Aurora-64 之后再关掉
+          SOFT_RELEASE: '1'
         run: |
           set -euo pipefail
           if [ -z "${GH_TOKEN}" ]; then
