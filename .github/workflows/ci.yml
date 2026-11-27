@@ -30,6 +30,16 @@ jobs:
       - name: Node 版本自检（.ts 直跑需要 >= 22.6）
         run: node -e "const [a,b]=process.versions.node.split('.').map(Number); if(a<22||(a===22&&b<6)) process.exit(1)"
 
+      - name: 安装测试用解析器（modules.test 全量解析 src 需要）
+        # 测试本身是零依赖的，唯一例外是 @babel/parser：它负责把 src 下每个 .ts/.tsx 解析一遍。
+        # 装到 $HOME/parsecheck（测试加载器的既有回退路径），不去动仓库的 node_modules，
+        # 也就不会去拉 RN / github 依赖那一大坨。
+        run: |
+          mkdir -p "$HOME/parsecheck"
+          cd "$HOME/parsecheck"
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund --loglevel=error @babel/parser
+
       - name: LXSP / 引擎 / 存储 回归（含真链路）
         run: node --import ./tests/lxsp/hook.mjs tests/lxsp/run.mjs
 

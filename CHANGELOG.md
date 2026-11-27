@@ -6,6 +6,31 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-74 - 2026-11-27
+
+### 修复
+
+- 存储：批量保存列表后读回旧值（saveDataMultiple 未写穿缓存/C++）；删除后仍能读到旧值（解封失效）
+- 音源：端点探测要等所有候选超时才返回；旧接口族四路串行；多端点串行初始化
+- 音源：`canceleFn` 是空函数，切歌后旧解析仍在跑并可能覆盖当前播放
+- 音源：直链缓存命中时一律报主源、且不校验服务端 `expiresAt`
+- 音源：WASM 插件只接受 `url`，README 推荐的 `builtin` 写法被静默丢弃
+- 音源：端点「测试连接」借用了全局第一个 provider，三个地址显示同一个健康度
+- 播放：淡入定时器未清理，暂停/连点会叠加多个 interval 改音量
+- 其它源搜索结果缓存用对象引用做 key，永不命中且持有整首歌对象
+
+### 优化
+
+- 内存缓存加体积/条数上限（LRU），淘汰后仍能正确读回
+- 大列表写入少一次 `JSON.stringify`
+
+### 工程
+
+- 新增 CI（三套测试 + 分支审计 + 宪法自检），`build-test` 补上 main 分支
+- 补上宪法要求但不存在的 `tools/constitution-audit.mjs`
+- `modules.test.mjs` 由「2 个目录 + 2 个文件」扩到 src 全量 608 个 .ts/.tsx
+- 5 处 TS+JSX 泛型歧义、`app.d.ts` 的非法 `module NodeJS` 修正
+- 源码 TODO 归零（迁入 `docs/KNOWN-LIMITATIONS.md`）；删除死代码 `kg/temp/*`
 ## [1.9.2](https://github.com/lyswhut/lx-music-mobile/compare/v1.9.1...v1.9.2) - 2026-10-30
 
 ### 修复
