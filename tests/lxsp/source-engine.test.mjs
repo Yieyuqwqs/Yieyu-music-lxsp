@@ -209,7 +209,7 @@ export default (t) => {
 
     // 1) 成功：code 0 + 真实直链
     const successFetch = async(url, init) => {
-      t.ok(init?.headers['X-LxM-Auth'] === 'k', '必须带 X-LxM-Auth 头')
+      t.ok(init?.headers['X-Request-Key'] === 'k', '必须带文档规定的 X-Request-Key 头')
       t.ok(!url.includes('key='), 'URL 里不许出现密钥')
       return { status: 200, ok: true, headers: { get: () => null }, text: async() => JSON.stringify({ code: 0, msg: '', data: 'http://cdn.test/a.flac', ext: { qual: 'flac' } }) }
     }
@@ -236,5 +236,36 @@ export default (t) => {
     const forbidden = provider(async() => ({ status: 403, ok: false, headers: { get: () => null }, text: async() => JSON.stringify({ code: 403, msg: '密钥验证失败', data: null }) }))
     const denied = await t.rejects(() => forbidden.resolveUrl(query, {}), 'unauthorized', '403 必须映射成 unauthorized')
     t.ok(denied.message.includes('密钥'), '必须带上网关的失败原因')
+  })
+
+  t.suite('lx-source 解析：code 6 时按文档用 mid 换规范 id 再试（mg/kg/tx 常见）', async() => {
+    const { ApiProfileProvider } = await import('../../src/core/source/api-profiles.ts')
+    const probe = { profile: 'lx-source', baseUrl: 'http://gw.test', sources: [{ key: 'mg', qualities: ['320k'] }] }
+    const calls = []
+    const fetchImpl = async(url) => {
+      calls.push(url)
+      const json = (body) => ({ status: 200, ok: true, headers: { get: () => null }, text: async() => JSON.stringify(body) })
+      if (url.includes('/mid/mg/old-id/')) return json({ code: 0, msg: '', data: { id: 'new-id', name: 'x' } })
+      if (url.includes('/url/mg/new-id/')) return json({ code: 0, msg: '', data: 'http://cdn.test/ok.mp3', ext: { qual: '320k' } })
+      return json({ code: 6, msg: '音乐ID校验失败', data: null })
+    }
+    const provider = new ApiProfileProvider({ probe, source: probe.sources[0], token: 'k', priority: 0, fetchImpl })
+    const result = await provider.resolveUrl({ source: 'mg', id: 'old-id', quality: '320k', name: '', singer: '' }, {})
+    t.eq(result.url, 'http://cdn.test/ok.mp3', '换规范 id 后必须成功')
+    t.ok(calls.some(u => u.endsWith('/mid/mg/old-id/')), '必须先调用 mid（且带末尾斜杠，否则 301）')
+    t.ok(calls.some(u => u.includes('/url/mg/new-id/')), '第二次必须用规范 id 请求 url')
+  })
+
+  t.suite('lx-source 解析：成功码兼容文档里的两种规范（0 与 200）', async() => {
+    const { ApiProfileProvider } = await import('../../src/core/source/api-profiles.ts')
+    const probe = { profile: 'lx-source', baseUrl: 'http://gw.test', sources: [{ key: 'kw', qualities: ['320k'] }] }
+    for (const code of [0, 200]) {
+      const provider = new ApiProfileProvider({
+        probe, source: probe.sources[0], token: 'k', priority: 0,
+        fetchImpl: async() => ({ status: 200, ok: true, headers: { get: () => null }, text: async() => JSON.stringify({ code, data: 'http://cdn.test/x.mp3', ext: { qual: '320k' } }) }),
+      })
+      const r = await provider.resolveUrl({ source: 'kw', id: '1', quality: '320k', name: '', singer: '' }, {})
+      t.eq(r.url, 'http://cdn.test/x.mp3', `code=${code} 必须被当作成功`)
+    }
   })
 }

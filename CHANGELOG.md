@@ -6,6 +6,14 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-81 - 2026-11-28
+
+### 修复（按网关文档 /doc/ 对齐）
+
+- 鉴权头改为文档规定的 `X-Request-Key`（`?key=` 只是无法设置请求头时的兜底）
+- `音乐ID校验失败` 时先调 `/api/v0/mid/{source}/{id}/` 换规范 id 再重试（文档：id 可能与传入不同）
+- 成功码兼容 `0`（enum 风格）与 `200`（http 风格）两种规范
+- 补齐音质别名 `fl24` / `sky`
 ## 1.9-Aurora-80 - 2026-11-28
 
 ### 修复

@@ -2,6 +2,16 @@
   "updatedAt": "2026-11-28",
   "claims": [
     {
+      "id": "gateway-doc-aligned",
+      "claim": "按网关文档对齐：X-Request-Key 头、mid 规范 id、成功码 0/200、音质别名 fl24/sky",
+      "source": "实测",
+      "evidence": [
+        "网关 /doc/（LX-Source 1.1.17）",
+        "tests/lxsp/source-engine.test.mjs（mid 换 id / 两种成功码）",
+        "verify-real-ids.mjs（真网关真 id 成功 206）"
+      ]
+    },
+    {
       "id": "lx-error-placeholder",
       "claim": "lx-source 失败时 data 中的 error.mp3 占位音频不再被当作直链；严格校验 code===0；错误按 ID失败/音质缺失/鉴权 分类",
       "source": "实测",

@@ -265,8 +265,8 @@ export const authSuite = (t) => {
       if (right.status === 200) {
         t.ok(extractUrl(right.text) != null, '正确密钥的响应必须含真实直链')
         positiveVerified = true
-      } else if (/停用|禁用|失效|disabled/i.test(right.text)) {
-        console.log('  SKIP：公网网关已停用测试密钥（KEY已被停用）——正向路径改到本机网关验证')
+      } else if (/停用|禁用|失效|不存在|无效|invalid|disabled|not.?found/i.test(right.text)) {
+        console.log(`  SKIP：公网网关已不接受测试密钥（${right.text.slice(0, 60)}）——正向路径改到本机网关验证`)
       } else {
         t.eq(right.status, 200, '正确密钥必须 200（既不是停用也不是网络问题）')
       }

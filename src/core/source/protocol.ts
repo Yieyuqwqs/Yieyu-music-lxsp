@@ -58,6 +58,9 @@ export const QUALITY_ALIASES: Readonly<Record<string, LX.Lxsp.Quality>> = {
   '192': '192k',
   '128': '128k',
   dolby: 'atmos',
+  // 网关文档里的音质别名（/doc/ 的音质表）
+  fl24: 'flac24bit',
+  sky: 'atmos_plus',
   atmos_plus_2: 'atmos_plus',
   zhenpin: 'master',
   maste: 'master',
@@ -229,15 +232,22 @@ export const redactUrl = (url: string): string => {
 /**
  * lx-source 的鉴权头。
  *
- * 实测（本机 LX-Source 1.1.17）：
- *   X-LxM-Auth: <key>   → 200（正确）/ 403（错误）
- *   ?key=<key>          → 与上面完全相同
- *   X-Api-Key / Bearer  → 一律 403（不是这族认的头）
+ * 依据网关自己的接口文档（LX-Source 1.1.17，/doc/）：
+ *   「key：接口密钥。**适用于无法设置请求头（X-Request-Key）的情况**（以及跳转调用）」
+ * 所以官方头名是 X-Request-Key，?key= 只是兜底。
  *
- * 既然 header 与 query 等价，就只用 header：密钥不再出现在 URL 里，
- * 也就不会被网关访问日志原样打印、不会进代理和浏览器历史。
+ * 实测（本机网关）：X-Request-Key / X-LxM-Auth 都能 200，错误密钥都 403；
+ * X-Api-Key / Bearer 则一律 403（不是这族认的头）。
+ * 我们只发文档规定的这一个头 —— 密钥不再出现在 URL 里，也不会被网关日志原样打印。
  */
-export const LX_SOURCE_AUTH_HEADER = 'X-LxM-Auth'
+export const LX_SOURCE_AUTH_HEADER = 'X-Request-Key'
+
+/**
+ * 网关的「成功码」。
+ * 文档原话：状态码目前同时混用两种规范 —— 原 LX-Source/Python 版的 enum 风格（0 = 成功）
+ * 与 ikun 版的 http 风格（200 = 成功）。所以两个都认。
+ */
+export const isLxSourceSuccessCode = (code: number | undefined): boolean => code === undefined || code === 0 || code === 200
 
 /** lx-source 的固定前缀：base 里如果已经带了，就不要再补一次 */
 export const LX_SOURCE_API_PREFIX = '/api/v0'

@@ -85,8 +85,8 @@ export default (t) => {
   t.suite('安全：lx-source 只走 X-LxM-Auth 头，URL 里不许再出现密钥', () => {
     const profiles = read('src/core/source/api-profiles.ts')
     const protocol = read('src/core/source/protocol.ts')
-    t.eq(LX_SOURCE_AUTH_HEADER, 'X-LxM-Auth', '鉴权头名固定为 X-LxM-Auth（实测网关认这个）')
-    t.ok(protocol.includes("export const LX_SOURCE_AUTH_HEADER = 'X-LxM-Auth'"), '头名必须来自 protocol 常量，不许散落硬编码')
+    t.eq(LX_SOURCE_AUTH_HEADER, 'X-Request-Key', '鉴权头必须是网关文档规定的 X-Request-Key（?key= 只是兜底）')
+    t.ok(protocol.includes("export const LX_SOURCE_AUTH_HEADER = 'X-Request-Key'"), '头名必须来自 protocol 常量，不许散落硬编码')
 
     t.ok(!profiles.includes("auth: 'query'"), 'lx-source 不许再走 query 鉴权')
     t.ok(!/key=' \+ encodeURIComponent/.test(profiles), '不许再往 URL 里拼 key=')

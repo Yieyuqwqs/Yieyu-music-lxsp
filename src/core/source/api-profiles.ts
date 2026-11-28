@@ -17,6 +17,7 @@ import {
   DEFAULT_LIMITS,
   LX_SOURCE_AUTH_HEADER,
   PROFILE_PRIORITY,
+  isLxSourceSuccessCode,
   lxSourcePath,
   normalizeApiBase,
 } from './protocol'
@@ -341,6 +342,44 @@ export class ApiProfileProvider implements SourceProvider {
     return this.probe.profile === 'lx-source'
   }
 
+  /** 组装返回值（lx-source 与其它族共用，避免复制一段 12 行的对象字面量） */
+  private toUrlResult(directUrl: string, body: Record<string, unknown> | null, quality: string, requested: string, upstream: string): UrlResult {
+    const ext = body ? asRecord(body.ext) : null
+    const actual = (ext && typeof ext.qual === 'string' ? ext.qual.toLowerCase() : quality)
+    const canonical = (actual === 'hires' ? 'flac24bit' : actual) as LX.Lxsp.Quality
+    return {
+      url: directUrl,
+      quality: canonical,
+      requestedQuality: requested,
+      downgraded: requested !== 'auto' && sortQualitiesDesc([canonical, requested])[0] === requested,
+      expiresAt: ext && typeof ext.expi === 'number' ? ext.expi as number : undefined,
+      detail: { format: /\.flac(\?|$)/i.test(directUrl) ? 'flac' : (/\.mp3(\?|$)/i.test(directUrl) ? 'mp3' : null) },
+      via: { upstream, cache: 'upstream', coalesced: false },
+    }
+  }
+
+  /**
+   * 用 /api/v0/mid/{source}/{id}/ 换「规范 id」。
+   * 网关文档明确写了：mid 返回的 id「可能与传入参数不同」（MG: songId / KG: album_audio_id / TX: strMediaMid），
+   * 而且 url 接口在 id 不对时会回 code 6「音乐ID校验失败」—— 这时换规范 id 再试一次才可能成功。
+   * 注意末尾斜杠：不带会 301。
+   */
+  private async fetchCanonicalId(query: UrlQuery, ctx: RequestContext): Promise<string | null> {
+    try {
+      const result = await callApi(
+        this.fetchImpl,
+        lxSourcePath(this.probe.baseUrl, `/mid/${query.source}/${encodeURIComponent(query.id)}/`),
+        { token: this.token, auth: 'header', authHeader: LX_SOURCE_AUTH_HEADER, timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal },
+      )
+      if (!isLxSourceSuccessCode(extractCode(result.body))) return null
+      const data = asRecord(result.body?.data)
+      const id = data && typeof data.id === 'string' ? data.id.trim() : ''
+      return id || null
+    } catch (error) {
+      return null
+    }
+  }
+
   async resolveUrl(query: UrlQuery, ctx: RequestContext = {}): Promise<UrlResult> {
     const quality = query.quality ?? '320k'
     const requested = query.quality ?? 'auto'
@@ -350,24 +389,26 @@ export class ApiProfileProvider implements SourceProvider {
     let status = 0
 
     if (this.isLxSource) {
-      const result = await callApi(this.fetchImpl, lxSourcePath(this.probe.baseUrl, `/url/${query.source}/${encodeURIComponent(query.id)}/${encodeURIComponent(quality)}`), {
-        token: this.token, auth: 'header', authHeader: LX_SOURCE_AUTH_HEADER, timeoutMs, signal: ctx.signal,
-      })
-      body = result.body
-      status = result.status
-      // lx-source 的成败看 code：code!==0 时 data 里是 error.mp3 占位音，绝不能当直链
-      const directUrl = readLxSourceUrl(body, status)
-      const ext = body ? asRecord(body.ext) : null
-      const actual = (ext && typeof ext.qual === 'string' ? ext.qual.toLowerCase() : quality)
-      const canonical = (actual === 'hires' ? 'flac24bit' : actual) as LX.Lxsp.Quality
-      return {
-        url: directUrl,
-        quality: canonical,
-        requestedQuality: requested,
-        downgraded: requested !== 'auto' && sortQualitiesDesc([canonical, requested])[0] === requested,
-        expiresAt: ext && typeof ext.expi === 'number' ? ext.expi as number : undefined,
-        detail: { format: /\.flac(\?|$)/i.test(directUrl) ? 'flac' : (/\.mp3(\?|$)/i.test(directUrl) ? 'mp3' : null) },
-        via: { upstream: `lx-source:${quality}`, cache: 'upstream', coalesced: false },
+      const askUrl = (id: string) => callApi(
+        this.fetchImpl,
+        lxSourcePath(this.probe.baseUrl, `/url/${query.source}/${encodeURIComponent(id)}/${encodeURIComponent(quality)}`),
+        { token: this.token, auth: 'header', authHeader: LX_SOURCE_AUTH_HEADER, timeoutMs, signal: ctx.signal },
+      )
+      let result = await askUrl(query.id)
+      try {
+        // 成败看 code：失败时 data 里是 error.mp3 占位音，绝不能当直链
+        const directUrl = readLxSourceUrl(result.body, result.status)
+        return this.toUrlResult(directUrl, result.body, quality, requested, `lx-source:${quality}`)
+      } catch (error) {
+        const lxError = error as LxspError
+        const idRejected = lxError.code === 'not_found' && /ID校验失败|id.*(invalid|校验)/i.test(lxError.message)
+        if (!idRejected) throw error
+        // 按文档用 mid 换规范 id 再试一次；换不到就直接把原始错误抛给上层（换源/降级）
+        const canonicalId = await this.fetchCanonicalId(query, ctx)
+        if (!canonicalId || canonicalId === query.id) throw error
+        result = await askUrl(canonicalId)
+        const directUrl = readLxSourceUrl(result.body, result.status)
+        return this.toUrlResult(directUrl, result.body, quality, requested, `lx-source:${quality}(mid:${canonicalId})`)
       }
     } else {
       const path = this.probe.profile === 'api-wwwweb' ? '/music/url' : '/api/parse'
@@ -456,7 +497,7 @@ const isErrorPlaceholderUrl = (url: string): boolean => /\/er{1,2}or\.mp3|\/erro
 const readLxSourceUrl = (body: Record<string, unknown> | null, status: number): string => {
   const code = extractCode(body)
   const message = extractMessage(body)
-  if (code !== undefined && code !== 0) {
+  if (!isLxSourceSuccessCode(code)) {
     const text = message || `网关返回 code=${code}`
     // code 6 = 音乐ID校验失败（同一 id 换音质/换来源都没用），按 not_found 处理，快速换源
     if (/ID校验失败|id.*(invalid|校验)/i.test(text)) throw new LxspError('not_found', text, { httpStatus: status })
