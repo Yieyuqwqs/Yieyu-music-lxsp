@@ -2,6 +2,15 @@
   "updatedAt": "2026-11-28",
   "claims": [
     {
+      "id": "visualizer-recovery",
+      "claim": "可视化卡顿后不再永久消失：取帧带 250ms 超时、连续无数据自动重新采集、每次渲染后重贴柱高",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/visualizer-recovery.test.mjs（超时/降级/结构契约）",
+        "raceTimeout 单测：悬挂 Promise 80ms 内返回 fallback"
+      ]
+    },
+    {
       "id": "gateway-doc-aligned",
       "claim": "按网关文档对齐：X-Request-Key 头、mid 规范 id、成功码 0/200、音质别名 fl24/sky",
       "source": "实测",

@@ -6,6 +6,12 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-82 - 2026-11-28
+
+### 修复
+
+- 可视化卡顿后永久消失：取帧 `await` 原生无超时（循环挂死）+ 重渲染把柱高重置为 0 而差分表不再重贴
+- 设置里可视化开关下新增原因说明（会员未解锁 / 本机不支持）
 ## 1.9-Aurora-81 - 2026-11-28
 
 ### 修复（按网关文档 /doc/ 对齐）

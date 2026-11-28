@@ -482,6 +482,8 @@
   "setting_play_show_bluetooth_lyric": "显示蓝牙歌词",
   "setting_play_show_notification_image": "在通知栏显示歌曲专辑封面图片",
   "setting_play_show_visualizer": "播放详情页显示音频可视化背景",
+  "setting_play_show_visualizer_need_pro": "可视化属于会员功能：当前未处于「已授权」状态，所以不会显示",
+  "setting_play_show_visualizer_unsupported": "本机音效模块未提供可视化数据（该机型不支持）",
   "setting_play_show_roma": "显示歌词罗马音（如果可用）",
   "setting_play_show_translation": "显示歌词翻译（如果可用）",
   "setting_play_word_lyric": "逐字动态歌词",

@@ -6,6 +6,7 @@ import { useSettingValue } from '@/store/setting/hook'
 import { useTheme } from '@/store/theme/hook'
 import { createStyle } from '@/utils/tools'
 import { getVisualizer, isVisualizerSupported, setVisualizerEnabled } from '@/plugins/player/soundEffect/visualizer'
+import { raceTimeout } from '@/utils/raceTimeout'
 
 /**
  * 播放页可视化背景（照 lx-music-desktop 的取数方式，动态调得比桌面版柔和很多）。
@@ -32,6 +33,13 @@ const FALL_SECONDS = 0.6 // 回落速度（眼睛主要受不了这个太快）
 const LOUDNESS_SECONDS = 0.9 // 整体响度增益的平滑时间
 const LOUDNESS_MIN = 0.62
 const LOUDNESS_MAX = 1.25
+/**
+ * 取帧超时。卡顿/原生队列拥塞时这个 Promise 可能永不 settle，
+ * 不设超时的话 await 会挂死整个循环（柱子就此消失且不恢复）。
+ */
+const FRAME_TIMEOUT_MS = 250
+/** 连续多久取不到数据就重新打开原生采集（防止音效模块被重连后 tap 掉了） */
+const REARM_AFTER_MS = 3000
 
 export default memo(() => {
   const theme = useTheme()
@@ -71,6 +79,7 @@ export default memo(() => {
     let idleFrames = 0
     let loudness = 0.85
     let lastAt = 0
+    let lastFrameAt = 0
 
     const applyFrame = (values: number[], active: boolean, deltaSeconds: number) => {
       // 1) 相邻柱子先做一次三点平滑，去掉宽频带带来的单根抽搐
@@ -109,7 +118,8 @@ export default memo(() => {
         timer = setTimeout(tick, 800)
         return
       }
-      const frame = await getVisualizer(barCount)
+      // 关键：必须带超时。原生卡住时宁可这一帧空跑，也不能让循环挂死
+      const frame = await raceTimeout(getVisualizer(barCount), FRAME_TIMEOUT_MS, null)
       if (!alive) return
       const now = Date.now()
       // 首次或长时间停摆时给一个稳定的 delta，避免一帧跳到底
@@ -118,6 +128,16 @@ export default memo(() => {
       const playing = (frame?.active ?? false) && isPlayRef.current
       if (frame) applyFrame(frame.bands, playing, deltaSeconds)
       idleFrames = playing ? 0 : idleFrames + 1
+      // 长时间取不到数据：重新打开一次原生采集（重连音效模块后 tap 可能已经掉了）
+      if (!frame && playing) {
+        if (!lastFrameAt) lastFrameAt = now
+        else if (now - lastFrameAt > REARM_AFTER_MS) {
+          lastFrameAt = now
+          setVisualizerEnabled(true)
+        }
+      } else {
+        lastFrameAt = now
+      }
       timer = setTimeout(tick, idleFrames > 6 ? 500 : powerSaveMode ? FRAME_MS_POWER_SAVE : FRAME_MS)
     }
 
@@ -135,6 +155,21 @@ export default memo(() => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enable, bars, size.width, maxHeight, powerSaveMode])
+
+  /**
+   * React 每次重渲染都会把柱子高度重置成 JSX 里写的 0（卡顿后父组件重渲染就是这种情况），
+   * 而取帧循环里的 `applied` 差分表以为这些高度已经下发过，于是不再重贴 —— 柱子就永久消失。
+   * 这里每次渲染后把「已知高度」重新贴回原生视图，并同步差分表，让循环继续生效。
+   */
+  useEffect(() => {
+    const refs = barRefs
+    const heights = heightsRef
+    const applied = appliedRef
+    for (let i = 0; i < bars; i++) {
+      refs[i]?.setNativeProps({ style: { height: heights[i] } })
+      applied[i] = heights[i]
+    }
+  })
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout

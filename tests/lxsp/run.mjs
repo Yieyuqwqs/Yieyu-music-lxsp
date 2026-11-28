@@ -41,7 +41,7 @@ const t = {
   },
 }
 
-const files = ['./track-map.test.mjs', './contract-listen-together.test.mjs', './audit.test.mjs', './branch.test.mjs', './modules.test.mjs', './live.test.mjs', './device-sim.test.mjs', './room-session.test.mjs', './align.test.mjs', './autocheck-record.test.mjs', './room-url-isolation.test.mjs', './co-control-meta.test.mjs', './storage.test.mjs', './kv-cache.test.mjs', './attempt-errors.test.mjs', './security.test.mjs', './secure-store.test.mjs', './ui-theme.test.mjs', './build-config.test.mjs', './source-engine.test.mjs']
+const files = ['./track-map.test.mjs', './contract-listen-together.test.mjs', './audit.test.mjs', './branch.test.mjs', './modules.test.mjs', './live.test.mjs', './device-sim.test.mjs', './room-session.test.mjs', './align.test.mjs', './autocheck-record.test.mjs', './room-url-isolation.test.mjs', './co-control-meta.test.mjs', './storage.test.mjs', './kv-cache.test.mjs', './attempt-errors.test.mjs', './security.test.mjs', './secure-store.test.mjs', './ui-theme.test.mjs', './build-config.test.mjs', './visualizer-recovery.test.mjs', './source-engine.test.mjs']
 for (const file of files) {
   const mod = await import(file)
   mod.default(t)
