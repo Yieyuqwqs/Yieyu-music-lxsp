@@ -355,6 +355,20 @@ export class ApiProfileProvider implements SourceProvider {
       })
       body = result.body
       status = result.status
+      // lx-source 的成败看 code：code!==0 时 data 里是 error.mp3 占位音，绝不能当直链
+      const directUrl = readLxSourceUrl(body, status)
+      const ext = body ? asRecord(body.ext) : null
+      const actual = (ext && typeof ext.qual === 'string' ? ext.qual.toLowerCase() : quality)
+      const canonical = (actual === 'hires' ? 'flac24bit' : actual) as LX.Lxsp.Quality
+      return {
+        url: directUrl,
+        quality: canonical,
+        requestedQuality: requested,
+        downgraded: requested !== 'auto' && sortQualitiesDesc([canonical, requested])[0] === requested,
+        expiresAt: ext && typeof ext.expi === 'number' ? ext.expi as number : undefined,
+        detail: { format: /\.flac(\?|$)/i.test(directUrl) ? 'flac' : (/\.mp3(\?|$)/i.test(directUrl) ? 'mp3' : null) },
+        via: { upstream: `lx-source:${quality}`, cache: 'upstream', coalesced: false },
+      }
     } else {
       const path = this.probe.profile === 'api-wwwweb' ? '/music/url' : '/api/parse'
       const payload = this.probe.profile === 'api-wwwweb'
@@ -381,6 +395,8 @@ export class ApiProfileProvider implements SourceProvider {
 
     const url = extractUrl(body)
     if (!url) throw mapError(extractMessage(body) || '接口没有返回直链', extractCode(body) ?? status)
+    // 其它族也可能回「错误占位音频」；一律不当作成功
+    if (isErrorPlaceholderUrl(url)) throw mapError(extractMessage(body) || '接口返回的是错误占位音频', status)
 
     const ext = body ? asRecord(body.ext) : null
     const actual = (ext && typeof ext.qual === 'string' ? ext.qual.toLowerCase() : quality)
@@ -422,3 +438,39 @@ export class ApiProfileProvider implements SourceProvider {
 }
 
 export { DEFAULT_SOURCES }
+
+/**
+ * 网关的「错误占位音频」判定。
+ *
+ * lx-source 失败时的响应长这样（真实抓包）：
+ *   {"code":2,"msg":"404","data":"http://127.0.0.1:1101/api/v1/file/er/error.mp3?6b0a7164","ext":{"qual":"temp"}}
+ * 也就是说 **data 里仍然是一个能播的 http 链接**。以前只判断「有没有 http 链接」，
+ * 于是把这个错误提示音当成歌曲直链交给播放器 —— 表现就是"点了不出声/一秒就停"，而且不会换源。
+ */
+const isErrorPlaceholderUrl = (url: string): boolean => /\/er{1,2}or\.mp3|\/error\.mp3/i.test(url)
+
+/**
+ * 解析 lx-source 的响应：成功必须是 code === 0 且 data 是可用的 http 直链。
+ * 抛出的错误带网关的真实 msg，UI 才能显示"为什么"。
+ */
+const readLxSourceUrl = (body: Record<string, unknown> | null, status: number): string => {
+  const code = extractCode(body)
+  const message = extractMessage(body)
+  if (code !== undefined && code !== 0) {
+    const text = message || `网关返回 code=${code}`
+    // code 6 = 音乐ID校验失败（同一 id 换音质/换来源都没用），按 not_found 处理，快速换源
+    if (/ID校验失败|id.*(invalid|校验)/i.test(text)) throw new LxspError('not_found', text, { httpStatus: status })
+    // 该音质不可用：先在同一源内降档（flac → 320k → 128k），别直接换源
+    // 实测网关在缺 flac 时回的就是 code:2 + msg:"404"
+    if (/^404$|无此音质|音质不可用|不支持.*音质|quality/i.test(text.trim())) {
+      throw new LxspError('quality_unavailable', text, { httpStatus: status })
+    }
+    throw mapError(text, status)
+  }
+  const url = extractUrl(body)
+  if (!url) throw mapError(message || '接口没有返回直链', status)
+  if (isErrorPlaceholderUrl(url)) {
+    throw mapError(message || '网关返回的是错误占位音频', status)
+  }
+  return url
+}

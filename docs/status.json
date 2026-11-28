@@ -2,6 +2,15 @@
   "updatedAt": "2026-11-28",
   "claims": [
     {
+      "id": "lx-error-placeholder",
+      "claim": "lx-source 失败时 data 中的 error.mp3 占位音频不再被当作直链；严格校验 code===0；错误按 ID失败/音质缺失/鉴权 分类",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/source-engine.test.mjs（4 类响应断言）",
+        "verify-real-ids.mjs（真网关真 id：成功 206 / 失败原因如实）"
+      ]
+    },
+    {
       "id": "api-prefix-normalized",
       "claim": "/api/v0 前缀只补一次：base 带前缀/尾斜杠都不会变成 /api/v0/api/v0",
       "source": "实测",

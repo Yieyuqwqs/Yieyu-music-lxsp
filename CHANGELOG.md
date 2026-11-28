@@ -6,6 +6,12 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-80 - 2026-11-28
+
+### 修复
+
+- lx-source 解析失败时 `data` 里的 `error.mp3` 占位音频被当成歌曲直链（点了不出声、也不换源）→ 现严格校验 `code === 0` 并拒绝占位音频
+- 错误分类：`音乐ID校验失败` → not_found（换源）；`404/无此音质` → quality_unavailable（先降档）；`403/密钥验证失败` → unauthorized（提示检查密钥）
 ## 1.9-Aurora-79 - 2026-11-28
 
 ### 安全

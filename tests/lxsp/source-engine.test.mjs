@@ -199,4 +199,42 @@ export default (t) => {
     t.eq(parseEndpoints('ftp://x, ,not-a-url').length, 0, '非 http(s) 一律丢弃')
     t.eq(parseEndpoints(null).length, 0, '空配置返回空数组')
   })
+
+  t.suite('lx-source 解析：code!==0 时绝不能把 error.mp3 当直链（真实抓包复现）', async() => {
+    const { ApiProfileProvider } = await import('../../src/core/source/api-profiles.ts')
+    const probe = { profile: 'lx-source', baseUrl: 'http://gw.test', sources: [{ key: 'kw', qualities: ['320k', 'flac'] }] }
+    const respond = (body) => async() => ({ status: 200, ok: true, headers: { get: () => null }, text: async() => JSON.stringify(body) })
+    const provider = (fetchImpl) => new ApiProfileProvider({ probe, source: probe.sources[0], token: 'k', priority: 0, fetchImpl })
+    const query = { source: 'kw', id: '313810', quality: 'flac', name: '', singer: '' }
+
+    // 1) 成功：code 0 + 真实直链
+    const successFetch = async(url, init) => {
+      t.ok(init?.headers['X-LxM-Auth'] === 'k', '必须带 X-LxM-Auth 头')
+      t.ok(!url.includes('key='), 'URL 里不许出现密钥')
+      return { status: 200, ok: true, headers: { get: () => null }, text: async() => JSON.stringify({ code: 0, msg: '', data: 'http://cdn.test/a.flac', ext: { qual: 'flac' } }) }
+    }
+    const ok = await provider(successFetch).resolveUrl(query, {})
+    t.eq(ok.url, 'http://cdn.test/a.flac', '成功时必须返回真实直链')
+    t.eq(ok.quality, 'flac', '音质取自 ext.qual')
+
+    // 2) 失败但 data 里是 error.mp3：必须抛错，而不是当成功
+    const errorMp3 = provider(respond({ code: 2, msg: '404', data: 'http://127.0.0.1:1101/api/v1/file/er/error.mp3?x=1', ext: { qual: 'temp' } }))
+    const err = await t.rejects(() => errorMp3.resolveUrl(query, {}), undefined, 'code!=0 必须抛错')
+    t.ok(!String(err.message).includes('error.mp3') || err.code !== undefined, '错误必须带错误码')
+    t.ok(['not_found', 'upstream_error', 'upstream_denied', 'quality_unavailable'].includes(err.code), `错误码要可归类，实际 ${err.code}`)
+
+    // 2.5) code 2 + "404" = 这个音质没有 → quality_unavailable（必须先降档，别急着换源）
+    const noFlac = provider(respond({ code: 2, msg: '404', data: 'http://127.0.0.1:1101/api/v1/file/er/error.mp3?x=1' }))
+    await t.rejects(() => noFlac.resolveUrl(query, {}), 'quality_unavailable', 'flac 缺失必须映射成 quality_unavailable')
+
+    // 3) code 6「音乐ID校验失败」→ not_found（换音质没用，直接换源）
+    const idFail = provider(respond({ code: 6, msg: '音乐ID校验失败', data: null }))
+    const idErr = await t.rejects(() => idFail.resolveUrl(query, {}), 'not_found', 'ID 校验失败必须映射成 not_found')
+    t.ok(idErr.message.includes('校验'), '必须把网关的原始原因带出来')
+
+    // 4) HTTP 层就失败（403）
+    const forbidden = provider(async() => ({ status: 403, ok: false, headers: { get: () => null }, text: async() => JSON.stringify({ code: 403, msg: '密钥验证失败', data: null }) }))
+    const denied = await t.rejects(() => forbidden.resolveUrl(query, {}), 'unauthorized', '403 必须映射成 unauthorized')
+    t.ok(denied.message.includes('密钥'), '必须带上网关的失败原因')
+  })
 }
