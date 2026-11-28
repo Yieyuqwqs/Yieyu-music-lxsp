@@ -5,14 +5,21 @@
  * App 里一行脚本都不执行，用户只填两个字段。
  *
  *   1. api-wwwweb    POST {base}/music/url  {source,musicId,quality} + X-Api-Key → {code:200,url}
- *   2. lx-source     GET  {base}/api/v0/    （自述 source 表）+ /api/v0/url/{source}/{id}/{quality}?key= → {code:0,data,ext.qual}
+ *   2. lx-source     GET  {base}/api/v0/    （自述 source 表）+ /api/v0/url/{source}/{id}/{quality} → {code:0,data,ext.qual}
+ *                    鉴权走 X-LxM-Auth 头（实测与 ?key= 等价；用头后密钥不进 URL）
  *   3. api-json      POST {base}/api/parse | /url  {source,id,quality} → 取 url / data.url
  *
  * 新版 LXSP v2（有 /manifest）优先，本层只在没有 /manifest 时启用 —— 两套并存，谁也没被删掉。
  */
 import { LxspError } from './errors'
 import { sortQualitiesDesc } from './quality'
-import { DEFAULT_LIMITS, PROFILE_PRIORITY, normalizeBaseUrl } from './protocol'
+import {
+  DEFAULT_LIMITS,
+  LX_SOURCE_AUTH_HEADER,
+  PROFILE_PRIORITY,
+  lxSourcePath,
+  normalizeApiBase,
+} from './protocol'
 import type { FetchLike } from './transport'
 import type { LyricResult, ProviderMeta, RequestContext, SearchResultData, SourceProvider, TrackQuery, UrlQuery, UrlResult } from './types'
 
@@ -68,15 +75,13 @@ interface CallOptions {
   signal?: RequestContext['signal']
   token?: string | null
   /**
-   * 鉴权放在哪里。
-   *
-   * 重要：这里**故意不再提供 "both"**。以前每个请求都同时发 X-Api-Key + Authorization + ?key=，
-   * 同一个密钥在一趟请求里出现三次，泄漏面直接 ×3（网关日志里就能看到 ?key=）。
-   * 现在按族只发一种：
-   *   · lx-source：只发 query（实测 header/bearer 都是 403，协议硬要求）
-   *   · wwwweb / api-json：只发 header
+   * 鉴权放在哪里：只发 header，**永远不再往 URL 里拼 key**。
+   *   · lx-source：X-LxM-Auth（实测与 ?key= 等价；用 header 后密钥不进日志）
+   *   · wwwweb / api-json：X-Api-Key
    */
-  auth?: 'header' | 'bearer' | 'query'
+  auth?: 'header' | 'bearer'
+  /** 覆盖默认 header 名（lx-source 用 X-LxM-Auth） */
+  authHeader?: string
 }
 
 const callApi = async(fetchImpl: FetchLike, url: string, options: CallOptions): Promise<{ status: number, body: Record<string, unknown> | null }> => {
@@ -93,12 +98,11 @@ const callApi = async(fetchImpl: FetchLike, url: string, options: CallOptions): 
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
   const token = options.token ?? null
   const auth = options.auth ?? 'header'
-  let target = url
+  const target = url
   if (token) {
-    // 只发一种：同族的后端各吃一种，多余的头/参数不但没用，还会把密钥重复暴露
-    if (auth === 'header') headers['X-Api-Key'] = token
+    // 只发 header，且只发一种：URL 里不再出现任何密钥（?key= 会让网关日志、代理、浏览器历史全都留一份）
+    if (auth === 'header') headers[options.authHeader ?? 'X-Api-Key'] = token
     else if (auth === 'bearer') headers.Authorization = `Bearer ${token}`
-    else if (auth === 'query') target += (target.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(token)
   }
 
   try {
@@ -214,7 +218,8 @@ export const probeApiProfiles = async(options: {
   /** 低优先级族先到后，等高优先级族的窗口；默认 200ms */
   graceMs?: number
 }): Promise<ApiProfileProbe | null> => {
-  const baseUrl = normalizeBaseUrl(options.baseUrl)
+  // 前缀归一：用户把 .../api/v0 粘进来也只补一次，不会再拼成 /api/v0/api/v0
+  const baseUrl = normalizeApiBase(options.baseUrl)
   const timeoutMs = Math.min(options.timeoutMs ?? 6000, 8000)
   const fetchImpl = options.fetchImpl
   const token = options.token ?? null
@@ -222,7 +227,7 @@ export const probeApiProfiles = async(options: {
 
   // 1) lx-source 系：/api/v0/ 会回一份自述 JSON
   const probeLxSource = async(): Promise<ApiProfileProbe | null> => {
-    const result = await callApi(fetchImpl, `${baseUrl}/api/v0/`, { timeoutMs, token, auth: 'query' })
+    const result = await callApi(fetchImpl, lxSourcePath(baseUrl, '/'), { timeoutMs, token, auth: 'header', authHeader: LX_SOURCE_AUTH_HEADER })
     const sourceMap = result.body ? asRecord(result.body.source) : null
     if (!sourceMap) return null
     const sources: ProfileSourceDecl[] = []
@@ -345,8 +350,8 @@ export class ApiProfileProvider implements SourceProvider {
     let status = 0
 
     if (this.isLxSource) {
-      const result = await callApi(this.fetchImpl, `${this.probe.baseUrl}/api/v0/url/${query.source}/${encodeURIComponent(query.id)}/${encodeURIComponent(quality)}`, {
-        token: this.token, auth: 'query', timeoutMs, signal: ctx.signal,
+      const result = await callApi(this.fetchImpl, lxSourcePath(this.probe.baseUrl, `/url/${query.source}/${encodeURIComponent(query.id)}/${encodeURIComponent(quality)}`), {
+        token: this.token, auth: 'header', authHeader: LX_SOURCE_AUTH_HEADER, timeoutMs, signal: ctx.signal,
       })
       body = result.body
       status = result.status
@@ -393,8 +398,8 @@ export class ApiProfileProvider implements SourceProvider {
 
   async lyric(query: TrackQuery, ctx: RequestContext = {}): Promise<LyricResult> {
     if (!this.isLxSource) throw new LxspError('unsupported', '该接口未声明歌词能力')
-    const result = await callApi(this.fetchImpl, `${this.probe.baseUrl}/api/v0/lrc/${query.source}/${encodeURIComponent(query.id)}/`, {
-      token: this.token, auth: 'query', timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal,
+    const result = await callApi(this.fetchImpl, lxSourcePath(this.probe.baseUrl, `/lrc/${query.source}/${encodeURIComponent(query.id)}/`), {
+      token: this.token, auth: 'header', authHeader: LX_SOURCE_AUTH_HEADER, timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal,
     })
     const data = result.body && typeof result.body.data === 'string' ? result.body.data : ''
     if (!data) throw mapError(extractMessage(result.body) || '无歌词', extractCode(result.body) ?? result.status)
@@ -403,8 +408,8 @@ export class ApiProfileProvider implements SourceProvider {
 
   async pic(query: TrackQuery, ctx: RequestContext = {}): Promise<string> {
     if (!this.isLxSource) throw new LxspError('unsupported', '该接口未声明封面能力')
-    const result = await callApi(this.fetchImpl, `${this.probe.baseUrl}/api/v0/pic/${query.source}/${encodeURIComponent(query.id)}/`, {
-      token: this.token, auth: 'query', timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal,
+    const result = await callApi(this.fetchImpl, lxSourcePath(this.probe.baseUrl, `/pic/${query.source}/${encodeURIComponent(query.id)}/`), {
+      token: this.token, auth: 'header', authHeader: LX_SOURCE_AUTH_HEADER, timeoutMs: ctx.timeoutMs ?? this.timeoutMs, signal: ctx.signal,
     })
     const data = result.body && typeof result.body.data === 'string' ? result.body.data : ''
     if (!/^https?:\/\//i.test(data)) throw mapError(extractMessage(result.body) || '无封面', extractCode(result.body) ?? result.status)

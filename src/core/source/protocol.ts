@@ -223,3 +223,43 @@ export const redactUrl = (url: string): string => {
   })
   return `${head}?${masked.join('&')}`
 }
+
+/* ------------------------- lx-source 族的鉴权与路径 ------------------------- */
+
+/**
+ * lx-source 的鉴权头。
+ *
+ * 实测（本机 LX-Source 1.1.17）：
+ *   X-LxM-Auth: <key>   → 200（正确）/ 403（错误）
+ *   ?key=<key>          → 与上面完全相同
+ *   X-Api-Key / Bearer  → 一律 403（不是这族认的头）
+ *
+ * 既然 header 与 query 等价，就只用 header：密钥不再出现在 URL 里，
+ * 也就不会被网关访问日志原样打印、不会进代理和浏览器历史。
+ */
+export const LX_SOURCE_AUTH_HEADER = 'X-LxM-Auth'
+
+/** lx-source 的固定前缀：base 里如果已经带了，就不要再补一次 */
+export const LX_SOURCE_API_PREFIX = '/api/v0'
+
+/**
+ * 归一化 API 根地址：
+ *   http://h:1101            → http://h:1101
+ *   http://h:1101/           → http://h:1101
+ *   http://h:1101/api/v0     → http://h:1101
+ *   http://h:1101/api/v0/    → http://h:1101
+ * 这样拼出来永远是「恰好一个 /api/v0」，用户把带前缀的地址粘进来也不会 404。
+ */
+export const normalizeApiBase = (baseUrl: string): string => {
+  let base = normalizeBaseUrl(baseUrl)
+  const suffix = new RegExp(`${LX_SOURCE_API_PREFIX.replace('/', '\\/')}/*$`, 'i')
+  base = base.replace(suffix, '')
+  return normalizeBaseUrl(base)
+}
+
+/** 拼 lx-source 接口地址（前缀只出现一次） */
+export const lxSourcePath = (baseUrl: string, path: string): string => {
+  const base = normalizeApiBase(baseUrl)
+  const tail = path.startsWith('/') ? path : `/${path}`
+  return `${base}${LX_SOURCE_API_PREFIX}${tail}`
+}

@@ -2,6 +2,23 @@
   "updatedAt": "2026-11-28",
   "claims": [
     {
+      "id": "api-prefix-normalized",
+      "claim": "/api/v0 前缀只补一次：base 带前缀/尾斜杠都不会变成 /api/v0/api/v0",
+      "source": "实测",
+      "evidence": [
+        "tests/lxsp/security.test.mjs（5 组 normalizeApiBase 断言）"
+      ]
+    },
+    {
+      "id": "lx-source-header-auth",
+      "claim": "lx-source 族只用 X-LxM-Auth 请求头鉴权，URL 中不再出现 key；实测本机网关 200/403 与 ?key= 等价",
+      "source": "实测",
+      "evidence": [
+        "verify-header-auth.mjs（三种 base 写法，直链 206/4096B）",
+        "tests/lxsp/security.test.mjs（头名与“不许拼 key=”契约）"
+      ]
+    },
+    {
       "id": "console-strip-release",
       "claim": "release 构建经 Babel 插件裁掉 console.log/info/debug/trace，warn/error 保留；dev 不裁",
       "source": "实测",
@@ -73,11 +90,10 @@
     },
     {
       "id": "apk-release-verified",
-      "claim": "APK 构建与发版闭环：release 包经 Babel 裁剪 console 后仍构建成功，双 Release 各 5 包，公库清单指向 Aurora-78/83",
-      "source": "实测",
+      "claim": "APK 构建与发版闭环（当前 Aurora-79/84）",
+      "source": "未接上",
       "evidence": [
-        "Actions Build APK success（6c20fa2, 638s）",
-        "gh api Yieyu-Update/contents/update.json"
+        "构建中，见 Actions"
       ]
     },
     {

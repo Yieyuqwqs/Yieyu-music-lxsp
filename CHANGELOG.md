@@ -6,6 +6,17 @@ Project versioning adheres to [Semantic Versioning](http://semver.org/).
 Commit convention is based on [Conventional Commits](http://conventionalcommits.org).
 Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
+## 1.9-Aurora-79 - 2026-11-28
+
+### 安全
+
+- lx-source 鉴权从 `?key=` 改为 `X-LxM-Auth` 请求头（实测等价），密钥不再出现在 URL / 网关日志
+- `callApi` 不再有 query 鉴权分支：任何后端都不会把密钥拼进 URL
+
+### 修复
+
+- `/api/v0` 前缀归一（`normalizeApiBase` / `lxSourcePath`）：粘贴带前缀的地址不会再变成 `/api/v0/api/v0`
+- 鉴权测试口径：公网测试密钥被上游停用时的误红（改为明确 SKIP + 本机网关正向验证）
 ## 1.9-Aurora-78 - 2026-11-28
 
 ### 优化

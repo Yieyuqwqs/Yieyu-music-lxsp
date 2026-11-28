@@ -14,7 +14,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { checkEndpointSecurity, hostOf, isPrivateHost, redactUrl } from '../../src/core/source/protocol.ts'
+import { checkEndpointSecurity, hostOf, isPrivateHost, LX_SOURCE_AUTH_HEADER, lxSourcePath, normalizeApiBase, redactUrl } from '../../src/core/source/protocol.ts'
 import { SourceEngine } from '../../src/core/source/engine.ts'
 
 const read = (rel) => readFileSync(fileURLToPath(new URL(`../../${rel}`, import.meta.url)), 'utf8')
@@ -82,14 +82,42 @@ export default (t) => {
     t.eq(fetched, 0, '被安全策略拦下时一个请求都不许发出去')
   })
 
-  t.suite('安全：静态契约（凭据只发一种 / 默认密钥已移除）', () => {
+  t.suite('安全：lx-source 只走 X-LxM-Auth 头，URL 里不许再出现密钥', () => {
     const profiles = read('src/core/source/api-profiles.ts')
-    t.ok(!profiles.includes("auth: 'both'"), '不许再有三处齐发的 both 模式')
-    t.ok(!/auth === 'both'/.test(profiles), 'callApi 里不许再保留 both 分支')
-    const queryCount = (profiles.match(/auth: 'query'/g) || []).length
-    t.ok(queryCount >= 3, `lx-source 族（探测+直链+歌词+封面）必须走 query，实际 ${queryCount} 处`)
+    const protocol = read('src/core/source/protocol.ts')
+    t.eq(LX_SOURCE_AUTH_HEADER, 'X-LxM-Auth', '鉴权头名固定为 X-LxM-Auth（实测网关认这个）')
+    t.ok(protocol.includes("export const LX_SOURCE_AUTH_HEADER = 'X-LxM-Auth'"), '头名必须来自 protocol 常量，不许散落硬编码')
+
+    t.ok(!profiles.includes("auth: 'query'"), 'lx-source 不许再走 query 鉴权')
+    t.ok(!/key=' \+ encodeURIComponent/.test(profiles), '不许再往 URL 里拼 key=')
+    t.ok(!/'\?key='/.test(profiles), '不许再拼 ?key=')
     const headerCount = (profiles.match(/auth: 'header'/g) || []).length
-    t.ok(headerCount >= 3, `wwwweb/json 族必须走 header，实际 ${headerCount} 处`)
+    t.ok(headerCount >= 4, `探测+直链+歌词+封面都要走 header，实际 ${headerCount} 处`)
+    const lxmCount = (profiles.match(/LX_SOURCE_AUTH_HEADER/g) || []).length
+    t.ok(lxmCount >= 4, `四处 lx-source 调用必须显式指定 X-LxM-Auth，实际 ${lxmCount} 处`)
+  })
+
+  t.suite('安全：/api/v0 前缀只补一次（用户粘贴带前缀的地址也不会变 /api/v0/api/v0）', () => {
+    const cases = [
+      ['http://127.0.0.1:1101', 'http://127.0.0.1:1101'],
+      ['http://127.0.0.1:1101/', 'http://127.0.0.1:1101'],
+      ['http://127.0.0.1:1101/api/v0', 'http://127.0.0.1:1101'],
+      ['http://127.0.0.1:1101/api/v0/', 'http://127.0.0.1:1101'],
+      ['https://gw.example.com/API/V0//', 'https://gw.example.com'],
+    ]
+    for (const [input, expected] of cases) {
+      t.eq(normalizeApiBase(input), expected, `normalizeApiBase(${input})`)
+    }
+    t.eq(lxSourcePath('http://h:1101/api/v0', '/url/kw/1/320k'), 'http://h:1101/api/v0/url/kw/1/320k', '带前缀的 base 只补一次')
+    t.eq(lxSourcePath('http://h:1101', 'url/kw/1/320k'), 'http://h:1101/api/v0/url/kw/1/320k', '不带前缀也要补上')
+    const profiles = read('src/core/source/api-profiles.ts')
+    t.ok(profiles.includes('lxSourcePath('), 'lx-source 请求必须走 lxSourcePath 拼地址')
+    t.ok(!profiles.includes('${baseUrl}/api/v0'), '不许再手写 `${baseUrl}/api/v0`')
+    t.ok(!profiles.includes('${this.probe.baseUrl}/api/v0'), '不许再手写 `${probe.baseUrl}/api/v0`')
+  })
+
+  t.suite('安全：默认密钥已移除', () => {
+    const profiles = read('src/core/source/api-profiles.ts')
 
     const defaults = read('src/config/defaultSetting.ts')
     t.ok(!defaults.includes(SECRET), '默认设置里不许再内置任何密钥')
